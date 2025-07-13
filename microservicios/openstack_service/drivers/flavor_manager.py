@@ -7,7 +7,7 @@ Gestiona los flavors (tipos de VM) disponibles en OpenStack
 import logging
 import requests
 from typing import Dict, List, Optional
-from microservicios.edits.openstack_config_ssh import OPENSTACK_CONFIG, VM_FLAVORS_OPENSTACK
+from microservicios.openstack_config_ssh import OPENSTACK_CONFIG, VM_FLAVORS_OPENSTACK
 
 logger = logging.getLogger(__name__)
 

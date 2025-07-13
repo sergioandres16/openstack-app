@@ -4,14 +4,18 @@ PUCP Cloud Orchestrator - Web Application
 Aplicación web completa con menú interactivo para gestión de slices
 """
 
-from flask import Flask, render_template, request, jsonify, redirect, url_for, session, flash
+from flask import Flask, render_template, request, jsonify, redirect, url_for, session, flash, g
 from flask_cors import CORS
 import requests
 import json
 import os
 import logging
+import sqlite3
+import hashlib
+import uuid
 from datetime import datetime, timedelta
 from functools import wraps
+from microservicios.openstack_config_ssh import SSH_TUNNEL_CONFIG
 
 # Configurar logging
 logging.basicConfig(level=logging.INFO)
@@ -22,8 +26,84 @@ CORS(app)
 app.secret_key = 'pucp-cloud-orchestrator-web-secret-2025'
 
 # Configuración
-API_BASE_URL = os.getenv('API_BASE_URL', 'http://localhost:5000')
+DATABASE_PATH = os.path.join(os.path.dirname(__file__), 'pucp_cloud.db')
 WEB_PORT = int(os.getenv('WEB_PORT', '8080'))
+
+# Database functions
+def get_db():
+    """Obtiene conexión a la base de datos"""
+    if 'db' not in g:
+        g.db = sqlite3.connect(DATABASE_PATH)
+        g.db.row_factory = sqlite3.Row
+    return g.db
+
+def close_db(e=None):
+    """Cierra la conexión a la base de datos"""
+    db = g.pop('db', None)
+    if db is not None:
+        db.close()
+
+def init_db():
+    """Inicializa la base de datos"""
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        conn.executescript('''
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT UNIQUE NOT NULL,
+                password_hash TEXT NOT NULL,
+                email TEXT,
+                role TEXT DEFAULT 'user',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                is_active BOOLEAN DEFAULT 1
+            );
+            
+            CREATE TABLE IF NOT EXISTS openstack_credentials (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                auth_url TEXT NOT NULL,
+                username TEXT NOT NULL,
+                password TEXT NOT NULL,
+                project_name TEXT NOT NULL,
+                user_domain_name TEXT DEFAULT 'Default',
+                project_domain_name TEXT DEFAULT 'Default',
+                region_name TEXT DEFAULT 'RegionOne',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                is_active BOOLEAN DEFAULT 1,
+                FOREIGN KEY (user_id) REFERENCES users (id)
+            );
+            
+            CREATE TABLE IF NOT EXISTS slices (
+                id TEXT PRIMARY KEY,
+                user_id INTEGER NOT NULL,
+                name TEXT NOT NULL,
+                description TEXT,
+                topology_type TEXT,
+                status TEXT DEFAULT 'draft',
+                config_data TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users (id)
+            );
+        ''')
+        
+        # Crear usuario admin por defecto
+        password_hash = hashlib.sha256('admin'.encode()).hexdigest()
+        try:
+            conn.execute('''
+                INSERT INTO users (username, password_hash, email, role)
+                VALUES (?, ?, ?, ?)
+            ''', ('admin', password_hash, 'admin@pucp.edu.pe', 'admin'))
+            conn.commit()
+            logger.info("Default admin user created")
+        except sqlite3.IntegrityError:
+            logger.info("Admin user already exists")
+
+def hash_password(password):
+    """Hash de contraseña"""
+    return hashlib.sha256(password.encode()).hexdigest()
+
+def verify_password(password, password_hash):
+    """Verificar contraseña"""
+    return hashlib.sha256(password.encode()).hexdigest() == password_hash
 
 # Topologías predefinidas
 PREDEFINED_TOPOLOGIES = {
@@ -117,18 +197,115 @@ def login_required(f):
         return f(*args, **kwargs)
     return decorated_function
 
-def make_api_request(method, endpoint, data=None, params=None):
-    """Hacer request a la API con token de autenticación"""
-    headers = {'Content-Type': 'application/json'}
+def get_user_openstack_credentials():
+    """Obtiene las credenciales de OpenStack del usuario actual"""
+    if 'user' not in session:
+        return None
     
-    if 'token' in session:
-        headers['Authorization'] = f"Bearer {session['token']}"
+    db = get_db()
+    credentials = db.execute(
+        'SELECT * FROM openstack_credentials WHERE user_id = ? AND is_active = 1',
+        (session['user']['id'],)
+    ).fetchone()
     
-    url = f"{API_BASE_URL}/api{endpoint}"
+    if credentials:
+        return {
+            'auth_url': credentials['auth_url'],
+            'username': credentials['username'],
+            'password': credentials['password'],
+            'project_name': credentials['project_name'],
+            'user_domain_name': credentials['user_domain_name'],
+            'project_domain_name': credentials['project_domain_name'],
+            'region_name': credentials['region_name']
+        }
+    return None
+
+def get_openstack_token():
+    """Obtiene token de autenticación de OpenStack"""
+    credentials = get_user_openstack_credentials()
+    if not credentials:
+        return None
+    
+    auth_data = {
+        "auth": {
+            "identity": {
+                "methods": ["password"],
+                "password": {
+                    "user": {
+                        "name": credentials['username'],
+                        "domain": {"name": credentials['user_domain_name']},
+                        "password": credentials['password']
+                    }
+                }
+            },
+            "scope": {
+                "project": {
+                    "name": credentials['project_name'],
+                    "domain": {"name": credentials['project_domain_name']}
+                }
+            }
+        }
+    }
+    
+    try:
+        response = requests.post(
+            f"{credentials['auth_url']}/auth/tokens",
+            json=auth_data,
+            headers={'Content-Type': 'application/json'},
+            timeout=30
+        )
+        
+        if response.status_code == 201:
+            return response.headers.get('X-Subject-Token')
+        else:
+            logger.error(f"Failed to get OpenStack token: {response.status_code} - {response.text}")
+            return None
+            
+    except Exception as e:
+        logger.error(f"Error getting OpenStack token: {e}")
+        return None
+
+def make_openstack_request(method, service, endpoint, data=None):
+    """Hace request a OpenStack API"""
+    credentials = get_user_openstack_credentials()
+    token = get_openstack_token()
+    
+    if not credentials or not token:
+        logger.warning("No OpenStack credentials or token available")
+        return None
+    
+    # URLs base para servicios OpenStack usando túneles SSH
+    if credentials['auth_url'].startswith('http://localhost:15000'):
+        # Usando túneles SSH - importar configuración de puertos
+        from microservicios.openstack_config_ssh import OPENSTACK_SERVICE_PORTS
+        service_urls = {
+            'compute': f"http://localhost:{OPENSTACK_SERVICE_PORTS['nova']['local']}/v2.1",
+            'image': f"http://localhost:{OPENSTACK_SERVICE_PORTS['glance']['local']}/v2",
+            'network': f"http://localhost:{OPENSTACK_SERVICE_PORTS['neutron']['local']}/v2.0",
+            'identity': credentials['auth_url']
+        }
+    else:
+        # Conexión directa
+        service_urls = {
+            'compute': credentials['auth_url'].replace(':5000', ':8774').replace('/v3', '/v2.1'),
+            'image': credentials['auth_url'].replace(':5000', ':9292').replace('/v3', '/v2'),
+            'network': credentials['auth_url'].replace(':5000', ':9696').replace('/v3', '/v2.0'),
+            'identity': credentials['auth_url']
+        }
+    
+    if service not in service_urls:
+        logger.error(f"Unknown service: {service}")
+        return None
+    
+    url = f"{service_urls[service]}{endpoint}"
+    headers = {
+        'X-Auth-Token': token,
+        'Content-Type': 'application/json'
+    }
     
     try:
         if method == 'GET':
-            response = requests.get(url, headers=headers, params=params, timeout=30)
+            response = requests.get(url, headers=headers, timeout=30)
         elif method == 'POST':
             response = requests.post(url, headers=headers, json=data, timeout=30)
         elif method == 'PUT':
@@ -138,10 +315,66 @@ def make_api_request(method, endpoint, data=None, params=None):
         else:
             return None
         
+        logger.info(f"OpenStack API {method} {url}: {response.status_code}")
         return response
+        
     except Exception as e:
-        logger.error(f"API request error: {e}")
+        logger.error(f"Error making OpenStack request: {e}")
         return None
+
+def make_api_request(method, endpoint, data=None, params=None):
+    """Maneja requests a APIs internas y OpenStack"""
+    logger.info(f"API request: {method} {endpoint}")
+    
+    # Simulación para endpoints internos que no requieren OpenStack
+    class MockResponse:
+        def __init__(self, json_data, status_code):
+            self.json_data = json_data
+            self.status_code = status_code
+        
+        def json(self):
+            return self.json_data
+    
+    # Mapear endpoints a OpenStack APIs
+    if endpoint == '/images':
+        response = make_openstack_request('GET', 'image', '/images')
+        if response and response.status_code == 200:
+            images = response.json().get('images', [])
+            return MockResponse(images, 200)
+        else:
+            # Fallback a datos simulados
+            return MockResponse([
+                {'id': '1', 'name': 'ubuntu-20.04', 'status': 'active'},
+                {'id': '2', 'name': 'centos-8', 'status': 'active'}
+            ], 200)
+    
+    elif endpoint == '/openstack/quotas/admin':
+        response = make_openstack_request('GET', 'compute', '/limits')
+        if response and response.status_code == 200:
+            limits = response.json().get('limits', {}).get('absolute', {})
+            return MockResponse({
+                'total_vcpus': limits.get('maxTotalCores', 100),
+                'used_vcpus': limits.get('totalCoresUsed', 25),
+                'total_ram': limits.get('maxTotalRAMSize', 102400),
+                'used_ram': limits.get('totalRAMUsed', 25600),
+                'total_instances': limits.get('maxTotalInstances', 50),
+                'used_instances': limits.get('totalInstancesUsed', 12)
+            }, 200)
+        else:
+            # Fallback
+            return MockResponse({
+                'total_vcpus': 100, 'used_vcpus': 25,
+                'total_ram': 102400, 'used_ram': 25600,
+                'total_instances': 50, 'used_instances': 12
+            }, 200)
+    
+    # Para otros endpoints, usar datos simulados
+    if endpoint == '/slices':
+        return MockResponse([], 200)
+    elif endpoint.startswith('/slices/') and endpoint.endswith('/nodes'):
+        return MockResponse([], 200)
+    
+    return MockResponse({}, 200)
 
 @app.route('/')
 def index():
@@ -161,17 +394,22 @@ def login():
             flash('Usuario y contraseña son requeridos', 'error')
             return render_template('login.html')
         
-        # Autenticar con la API
-        response = requests.post(f"{API_BASE_URL}/api/auth/login", json={
-            'username': username,
-            'password': password
-        })
+        # Autenticación con base de datos
+        db = get_db()
+        user = db.execute(
+            'SELECT * FROM users WHERE username = ? AND is_active = 1',
+            (username,)
+        ).fetchone()
         
-        if response.status_code == 200:
-            data = response.json()
-            session['token'] = data['token']
-            session['user'] = data['user']
-            flash(f'Bienvenido, {data["user"]["username"]}!', 'success')
+        if user and verify_password(password, user['password_hash']):
+            session['token'] = str(uuid.uuid4())
+            session['user'] = {
+                'id': user['id'],
+                'username': user['username'],
+                'email': user['email'],
+                'role': user['role']
+            }
+            flash(f'Bienvenido, {username}!', 'success')
             return redirect(url_for('dashboard'))
         else:
             flash('Credenciales inválidas', 'error')
@@ -344,6 +582,64 @@ def vm_console(vm_id):
     return render_template('vm_console.html', 
                          vm_id=vm_id,
                          console_data=console_data)
+
+@app.route('/settings')
+@login_required
+def settings():
+    """Página de configuración del usuario"""
+    db = get_db()
+    credentials = db.execute(
+        'SELECT * FROM openstack_credentials WHERE user_id = ? AND is_active = 1',
+        (session['user']['id'],)
+    ).fetchone()
+    
+    return render_template('settings.html', credentials=credentials)
+
+@app.route('/settings/openstack', methods=['POST'])
+@login_required
+def save_openstack_credentials():
+    """Guardar credenciales de OpenStack"""
+    try:
+        data = request.get_json()
+        db = get_db()
+        
+        # Verificar si ya existen credenciales
+        existing = db.execute(
+            'SELECT id FROM openstack_credentials WHERE user_id = ? AND is_active = 1',
+            (session['user']['id'],)
+        ).fetchone()
+        
+        if existing:
+            # Actualizar credenciales existentes
+            db.execute('''
+                UPDATE openstack_credentials 
+                SET auth_url = ?, username = ?, password = ?, project_name = ?,
+                    user_domain_name = ?, project_domain_name = ?, region_name = ?
+                WHERE user_id = ? AND is_active = 1
+            ''', (
+                data['auth_url'], data['username'], data['password'],
+                data['project_name'], data.get('user_domain_name', 'Default'),
+                data.get('project_domain_name', 'Default'), data.get('region_name', 'RegionOne'),
+                session['user']['id']
+            ))
+        else:
+            # Crear nuevas credenciales
+            db.execute('''
+                INSERT INTO openstack_credentials 
+                (user_id, auth_url, username, password, project_name, user_domain_name, project_domain_name, region_name)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                session['user']['id'], data['auth_url'], data['username'], data['password'],
+                data['project_name'], data.get('user_domain_name', 'Default'),
+                data.get('project_domain_name', 'Default'), data.get('region_name', 'RegionOne')
+            ))
+        
+        db.commit()
+        return jsonify({'success': True, 'message': 'Credenciales guardadas exitosamente'})
+        
+    except Exception as e:
+        logger.error(f"Error saving OpenStack credentials: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/resources')
 @login_required
@@ -559,5 +855,11 @@ def get_vm_console_access(vm_id):
         'instructions': 'Use las credenciales por defecto de la imagen para acceder.'
     }
 
+# Registrar función de cierre de DB
+app.teardown_appcontext(close_db)
+
 if __name__ == '__main__':
+    # Inicializar base de datos
+    init_db()
+    logger.info(f"Starting web application on port {WEB_PORT}")
     app.run(host='0.0.0.0', port=WEB_PORT, debug=True)

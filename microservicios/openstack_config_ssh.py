@@ -8,12 +8,12 @@ import os
 
 # Configuración de conexión SSH a OpenStack via Jumper
 SSH_CONFIG = {
-    'jumper_host': '10.20.12.187',        # IP del jumper/bastion
-    'jumper_port': 5821,                  # Puerto SSH del jumper
-    'jumper_user': 'ubuntu',              # Usuario para el jumper
-    'openstack_headnode': '192.168.202.1', # IP del headnode OpenStack (red interna)
-    'ssh_key_path': os.path.expanduser('~/.ssh/id_rsa'),
-    'ssh_tunnel_local_port': 15000,       # Puerto local base para túneles
+    'jumper_host': '10.20.12.187',  # IP del jumper/bastion
+    'jumper_port': 5821,  # Puerto SSH del jumper
+    'jumper_user': 'ubuntu',  # Usuario para el jumper
+    'openstack_headnode': '192.168.202.1',  # IP del headnode OpenStack (red interna)
+    'ssh_key_path': os.path.expanduser('~/.ssh/pucp_key'),
+    'ssh_tunnel_local_port': 15000,  # Puerto local base para túneles
 }
 
 # Configuración de OpenStack (a través del túnel SSH)
@@ -23,7 +23,7 @@ OPENSTACK_CONFIG = {
     'compute_url': f"http://localhost:{SSH_CONFIG['ssh_tunnel_local_port']}/compute/v2.1",
     'network_url': f"http://localhost:{SSH_CONFIG['ssh_tunnel_local_port']}/networking",
     'image_url': f"http://localhost:{SSH_CONFIG['ssh_tunnel_local_port']}/image",
-    
+
     # Credenciales OpenStack
     'username': os.getenv('OPENSTACK_USERNAME', 'admin'),
     'password': os.getenv('OPENSTACK_PASSWORD', 'openstack123'),
@@ -60,7 +60,7 @@ OPENSTACK_SERVICE_PORTS = {
 # Configuración de red por defecto
 NETWORK_CONFIG = {
     'provider_network': 'provider',
-    'external_network': 'external', 
+    'external_network': 'external',
     'management_network': 'management',
     'dns_nameservers': ['8.8.8.8', '8.8.4.4'],
     'vlan_range': {
@@ -75,11 +75,11 @@ VM_FLAVORS_OPENSTACK = {
         'name': 'm1.nano',
         'vcpus': 1,
         'ram': 512,  # MB
-        'disk': 1,   # GB
+        'disk': 1,  # GB
         'description': 'Nano instance (1 vCPU, 512MB RAM, 1GB disk)'
     },
     'micro': {
-        'name': 'm1.micro', 
+        'name': 'm1.micro',
         'vcpus': 1,
         'ram': 1024,
         'disk': 5,
@@ -117,14 +117,14 @@ DEFAULT_IMAGES_OPENSTACK = {
         'description': 'Ubuntu 20.04 LTS Server'
     },
     'ubuntu-22.04': {
-        'name': 'ubuntu-22.04-server-cloudimg', 
+        'name': 'ubuntu-22.04-server-cloudimg',
         'os_type': 'linux',
         'os_version': '22.04',
         'description': 'Ubuntu 22.04 LTS Server'
     },
     'centos-8': {
         'name': 'centos-8-stream-cloudimg',
-        'os_type': 'linux', 
+        'os_type': 'linux',
         'os_version': '8',
         'description': 'CentOS 8 Stream'
     },
@@ -223,7 +223,7 @@ SYSTEM_RESOURCES_CONFIG = {
         'max_networks_per_slice': 10,
         'max_vcpus_per_user': 50,
         'max_ram_per_user': 51200,  # MB
-        'max_disk_per_user': 500    # GB
+        'max_disk_per_user': 500  # GB
     }
 }
 
@@ -236,9 +236,11 @@ VM_CONSOLE_CONFIG = {
     'auto_generate_credentials': True
 }
 
+
 def get_ssh_command():
     """Genera comando SSH para conectar al jumper"""
     return f"ssh -p {SSH_CONFIG['jumper_port']} {SSH_CONFIG['jumper_user']}@{SSH_CONFIG['jumper_host']}"
+
 
 def get_ssh_tunnel_command():
     """Genera comando para crear túnel SSH al headnode OpenStack"""
@@ -246,13 +248,15 @@ def get_ssh_tunnel_command():
     for service, ports in OPENSTACK_SERVICE_PORTS.items():
         # Túnel desde puerto local hacia el headnode a través del jumper
         tunnels.append(f"-L {ports['local']}:{SSH_CONFIG['openstack_headnode']}:{ports['remote']}")
-    
+
     tunnel_args = " ".join(tunnels)
     return f"ssh -N {tunnel_args} -p {SSH_CONFIG['jumper_port']} {SSH_CONFIG['jumper_user']}@{SSH_CONFIG['jumper_host']}"
+
 
 def get_simple_tunnel_command(local_port, remote_port):
     """Genera comando para túnel simple como el ejemplo dado"""
     return f"ssh -NL {local_port}:{SSH_CONFIG['openstack_headnode']}:{remote_port} {SSH_CONFIG['jumper_user']}@{SSH_CONFIG['jumper_host']} -p {SSH_CONFIG['jumper_port']}"
+
 
 def validate_ssh_connection():
     """Valida la conexión SSH al jumper"""

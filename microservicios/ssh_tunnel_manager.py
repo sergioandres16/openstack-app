@@ -11,7 +11,7 @@ import logging
 import os
 import signal
 from typing import Dict, Optional, List
-from microservicios.edits.openstack_config_ssh import SSH_CONFIG, OPENSTACK_SERVICE_PORTS, SSH_TUNNEL_CONFIG
+from microservicios.openstack_config_ssh import SSH_CONFIG, OPENSTACK_SERVICE_PORTS, SSH_TUNNEL_CONFIG
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +59,7 @@ class SSHTunnelManager:
             '-o', 'StrictHostKeyChecking=no',
             '-o', 'UserKnownHostsFile=/dev/null',
             '-o', 'LogLevel=ERROR',
-            '-o', f"ConnectTimeout={SSH_TUNNEL_CONFIG['timeout']}",
+            '-o', f"ConnectTimeout={SSH_TUNNEL_CONFIG.get('timeout', 30)}",
             f"{SSH_CONFIG['jumper_user']}@{SSH_CONFIG['jumper_host']}"
         ]
         

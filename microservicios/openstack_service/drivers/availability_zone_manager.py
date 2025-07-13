@@ -7,7 +7,7 @@ Gestiona las zonas de disponibilidad para distribución de VMs
 import logging
 import requests
 from typing import Dict, List, Optional
-from microservicios.edits.openstack_config_ssh import OPENSTACK_CONFIG
+from microservicios.openstack_config_ssh import OPENSTACK_CONFIG
 
 logger = logging.getLogger(__name__)
 

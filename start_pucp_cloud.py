@@ -12,7 +12,7 @@ import logging
 import signal
 from multiprocessing import Process
 from microservicios.ssh_tunnel_manager import tunnel_manager, start_openstack_tunnels
-from microservicios.edits.openstack_config_ssh import SSH_CONFIG, SSH_TUNNEL_CONFIG
+from microservicios.openstack_config_ssh import SSH_CONFIG, SSH_TUNNEL_CONFIG
 
 # Configurar logging
 logging.basicConfig(
@@ -68,53 +68,7 @@ class PUCPCloudOrchestrator:
             logger.error(f"Error starting web application: {e}")
             return None
     
-    def start_openstack_service(self):
-        """Inicia el microservicio de OpenStack"""
-        try:
-            logger.info("Starting OpenStack microservice...")
-            
-            service_path = os.path.join(
-                os.path.dirname(__file__), 
-                'microservicios/openstack_service/openstack_service.py'
-            )
-            
-            if not os.path.exists(service_path):
-                logger.error("OpenStack service not found!")
-                return None
-            
-            process = subprocess.Popen(
-                [sys.executable, service_path],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE
-            )
-            
-            time.sleep(3)  # Esperar a que arranque
-            
-            if process.poll() is None:
-                logger.info(f"OpenStack service started successfully (PID: {process.pid})")
-                return process
-            else:
-                stdout, stderr = process.communicate()
-                logger.error(f"Failed to start OpenStack service: {stderr.decode()}")
-                return None
-                
-        except Exception as e:
-            logger.error(f"Error starting OpenStack service: {e}")
-            return None
     
-    def start_linux_cluster_service(self):
-        """Inicia el microservicio de Linux Cluster"""
-        try:
-            logger.info("Starting Linux Cluster microservice...")
-            
-            # Para este ejemplo, asumimos que existe un servicio similar
-            # En la implementación real, aquí iría el microservicio del cluster Linux
-            logger.info("Linux Cluster service would start here (not implemented in this demo)")
-            return None
-                
-        except Exception as e:
-            logger.error(f"Error starting Linux Cluster service: {e}")
-            return None
     
     def setup_ssh_tunnels(self):
         """Configura y establece túneles SSH a OpenStack"""
@@ -142,7 +96,7 @@ class PUCPCloudOrchestrator:
                 logger.info("Headnode connectivity verified")
             
             # Iniciar túneles si está configurado para auto-establecimiento
-            if SSH_TUNNEL_CONFIG.get('auto_establish', False):
+            if SSH_TUNNEL_CONFIG.get('auto_establish', True):
                 success = start_openstack_tunnels()
                 if success:
                     logger.info("SSH tunnels established successfully")
@@ -172,8 +126,7 @@ class PUCPCloudOrchestrator:
         
         # Verificar Python packages
         required_packages = [
-            'flask', 'flask-cors', 'jwt', 'sqlite3',
-            'subprocess', 'threading', 'logging'
+            'flask', 'flask-cors', 'requests'
         ]
         
         missing_packages = []
@@ -210,12 +163,7 @@ class PUCPCloudOrchestrator:
         if not self.setup_ssh_tunnels():
             logger.warning("SSH tunnels setup failed, but continuing...")
         
-        # Iniciar microservicio OpenStack
-        openstack_process = self.start_openstack_service()
-        if openstack_process:
-            self.processes['openstack'] = openstack_process
-        
-        # Iniciar aplicación web principal
+        # Iniciar aplicación web principal (que incluye funcionalidad OpenStack)
         web_process = self.start_web_application()
         if web_process:
             self.processes['web'] = web_process
@@ -234,8 +182,7 @@ class PUCPCloudOrchestrator:
                     logger.info(f"  - {service}: {status}")
             
             logger.info("🌐 Access URLs:")
-            logger.info("  - Web Interface: http://localhost:5000")
-            logger.info("  - OpenStack API: http://localhost:5006")
+            logger.info("  - Web Interface: http://localhost:8080")
             
             return True
         else:
@@ -292,8 +239,6 @@ class PUCPCloudOrchestrator:
                         # Reintentar arranque
                         if service_name == 'web':
                             new_process = self.start_web_application()
-                        elif service_name == 'openstack':
-                            new_process = self.start_openstack_service()
                         else:
                             new_process = None
                         

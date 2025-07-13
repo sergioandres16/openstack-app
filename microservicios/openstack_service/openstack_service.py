@@ -15,13 +15,13 @@ import logging
 from functools import wraps
 from typing import Dict, List, Any, Optional
 import jwt
-from .drivers.openstack_driver import OpenStackDriver
-from .api.openstack_api import OpenStackAPI
-from .config.openstack_config import OPENSTACK_CONFIG
-from .drivers.flavor_manager import FlavorManager
-from .drivers.availability_zone_manager import AvailabilityZoneManager
+from drivers.openstack_driver import OpenStackDriver
+from api.openstack_api import OpenStackAPI
+from config.openstack_config import OPENSTACK_CONFIG
+from drivers.flavor_manager import FlavorManager
+from drivers.availability_zone_manager import AvailabilityZoneManager
 from microservicios.ssh_tunnel_manager import tunnel_manager, start_openstack_tunnels, is_openstack_accessible
-from microservicios.edits.openstack_config_ssh import SSH_CONFIG, SSH_TUNNEL_CONFIG
+from microservicios.openstack_config_ssh import SSH_CONFIG, SSH_TUNNEL_CONFIG
 
 # Configurar logging
 logging.basicConfig(
@@ -965,7 +965,7 @@ def get_availability_zones():
 @app.before_first_request
 def auto_start_tunnels():
     """Inicia automáticamente los túneles SSH al arrancar el servicio"""
-    if SSH_TUNNEL_CONFIG.get('auto_establish', False):
+    if SSH_TUNNEL_CONFIG.get('auto_establish', True):
         logger.info("Auto-starting SSH tunnels...")
         try:
             if tunnel_manager.test_ssh_connection():
@@ -978,5 +978,5 @@ def auto_start_tunnels():
 
 if __name__ == '__main__':
     init_db()
-    logger.info("Starting OpenStack Service on port 5006...")
-    app.run(host='0.0.0.0', port=5006, debug=False)
+    logger.info("Starting OpenStack Service on port 5007...")
+    app.run(host='0.0.0.0', port=5007, debug=False)
