@@ -1,0 +1,206 @@
+# PUCP Cloud Orchestrator - Docker Compose (UPDATED with OpenStack Service)
+version: '3.8'
+
+services:
+  # Auth Service
+  auth-service:
+    build:
+      context: ./auth_service
+      dockerfile: Dockerfile
+    ports:
+      - "5001:5001"
+    environment:
+      - JWT_SECRET_KEY=pucp-cloud-secret-2025
+      - DATABASE_PATH=/data/auth_service.db
+    volumes:
+      - auth_data:/data
+    networks:
+      - pucp-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Template Service
+  template-service:
+    build:
+      context: ./template_service
+      dockerfile: Dockerfile
+    ports:
+      - "5003:5003"
+    environment:
+      - JWT_SECRET_KEY=pucp-cloud-secret-2025
+      - DATABASE_PATH=/data/template_service.db
+    volumes:
+      - template_data:/data
+    networks:
+      - pucp-network
+    depends_on:
+      - auth-service
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5003/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Image Service
+  image-service:
+    build:
+      context: ./image_service
+      dockerfile: Dockerfile
+    ports:
+      - "5005:5005"
+    environment:
+      - JWT_SECRET_KEY=pucp-cloud-secret-2025
+      - DATABASE_PATH=/data/image_service.db
+      - UPLOAD_FOLDER=/data/images
+    volumes:
+      - image_data:/data
+    networks:
+      - pucp-network
+    depends_on:
+      - auth-service
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5005/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Network Service
+  network-service:
+    build:
+      context: ./network_service
+      dockerfile: Dockerfile
+    ports:
+      - "5004:5004"
+    environment:
+      - JWT_SECRET_KEY=pucp-cloud-secret-2025
+      - DATABASE_PATH=/data/network_service.db
+    volumes:
+      - network_data:/data
+    networks:
+      - pucp-network
+    depends_on:
+      - auth-service
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5004/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # NUEVO: OpenStack Service
+  openstack-service:
+    build:
+      context: ./microservicios/openstack_service
+      dockerfile: Dockerfile
+    ports:
+      - "5006:5006"
+    environment:
+      - JWT_SECRET_KEY=pucp-cloud-secret-2025
+      - DATABASE_PATH=/data/openstack_service.db
+      - OPENSTACK_AUTH_URL=${OPENSTACK_AUTH_URL:-http://10.60.2.21:5000/v3}
+      - OPENSTACK_USERNAME=${OPENSTACK_USERNAME:-admin}
+      - OPENSTACK_PASSWORD=${OPENSTACK_PASSWORD:-openstack123}
+      - OPENSTACK_PROJECT_NAME=${OPENSTACK_PROJECT_NAME:-admin}
+      - OPENSTACK_USER_DOMAIN_NAME=${OPENSTACK_USER_DOMAIN_NAME:-Default}
+      - OPENSTACK_PROJECT_DOMAIN_NAME=${OPENSTACK_PROJECT_DOMAIN_NAME:-Default}
+      - OPENSTACK_REGION_NAME=${OPENSTACK_REGION_NAME:-RegionOne}
+    volumes:
+      - openstack_data:/data
+    networks:
+      - pucp-network
+    depends_on:
+      - auth-service
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5006/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Slice Service
+  slice-service:
+    build:
+      context: ./slice_service
+      dockerfile: Dockerfile
+    ports:
+      - "5002:5002"
+    environment:
+      - JWT_SECRET_KEY=pucp-cloud-secret-2025
+      - DATABASE_PATH=/data/slice_service.db
+      - OPENSTACK_SERVICE_URL=http://openstack-service:5006
+      - NETWORK_SERVICE_URL=http://network-service:5004
+    volumes:
+      - slice_data:/data
+    networks:
+      - pucp-network
+    depends_on:
+      - auth-service
+      - network-service
+      - openstack-service
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5002/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # API Gateway
+  api-gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "5000:5000"
+    environment:
+      - JWT_SECRET_KEY=pucp-cloud-secret-2025
+      - AUTH_SERVICE_URL=http://auth-service:5001
+      - SLICE_SERVICE_URL=http://slice-service:5002
+      - TEMPLATE_SERVICE_URL=http://template-service:5003
+      - NETWORK_SERVICE_URL=http://network-service:5004
+      - IMAGE_SERVICE_URL=http://image-service:5005
+      - OPENSTACK_SERVICE_URL=http://openstack-service:5006
+    networks:
+      - pucp-network
+    depends_on:
+      - auth-service
+      - slice-service
+      - template-service
+      - network-service
+      - image-service
+      - openstack-service
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # OPCIONAL: Nginx como proxy reverso
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro
+    networks:
+      - pucp-network
+    depends_on:
+      - api-gateway
+    profiles:
+      - production
+
+networks:
+  pucp-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+volumes:
+  auth_data:
+  template_data:
+  image_data:
+  network_data:
+  openstack_data:
+  slice_data:

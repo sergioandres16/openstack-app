@@ -1,0 +1,387 @@
+/* PUCP Cloud Orchestrator - Custom Styles */
+
+/* Base Styles */
+:root {
+    --primary-color: #0d6efd;
+    --secondary-color: #6c757d;
+    --success-color: #198754;
+    --danger-color: #dc3545;
+    --warning-color: #ffc107;
+    --info-color: #0dcaf0;
+    --light-color: #f8f9fa;
+    --dark-color: #212529;
+    
+    --border-radius: 8px;
+    --box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    --transition: all 0.3s ease;
+}
+
+body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    background-color: #f5f7fa;
+}
+
+/* Navigation */
+.navbar-brand {
+    font-weight: bold;
+    font-size: 1.3rem;
+}
+
+.navbar-nav .nav-link {
+    font-weight: 500;
+    transition: var(--transition);
+}
+
+.navbar-nav .nav-link:hover {
+    transform: translateY(-1px);
+}
+
+/* Cards */
+.card {
+    border: none;
+    border-radius: var(--border-radius);
+    box-shadow: var(--box-shadow);
+    transition: var(--transition);
+}
+
+.card:hover {
+    box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+}
+
+.card-header {
+    background-color: #fff;
+    border-bottom: 2px solid var(--light-color);
+    font-weight: 600;
+}
+
+/* Buttons */
+.btn {
+    border-radius: var(--border-radius);
+    font-weight: 500;
+    transition: var(--transition);
+}
+
+.btn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+}
+
+/* Form Styles */
+.form-control, .form-select {
+    border-radius: var(--border-radius);
+    border: 2px solid #e9ecef;
+    transition: var(--transition);
+}
+
+.form-control:focus, .form-select:focus {
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 0.2rem rgba(13, 110, 253, 0.25);
+}
+
+/* Progress Bars */
+.progress {
+    border-radius: var(--border-radius);
+    height: 10px;
+}
+
+.progress-bar {
+    border-radius: var(--border-radius);
+}
+
+/* Badges */
+.badge {
+    border-radius: var(--border-radius);
+    font-weight: 500;
+}
+
+/* Alerts */
+.alert {
+    border-radius: var(--border-radius);
+    border: none;
+    font-weight: 500;
+}
+
+/* Dashboard Specific */
+.metric {
+    text-align: center;
+    padding: 1rem;
+}
+
+.metric-value {
+    font-size: 2rem;
+    font-weight: bold;
+    color: var(--dark-color);
+}
+
+.metric-label {
+    font-size: 0.875rem;
+    color: var(--secondary-color);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+/* Slice Cards */
+.slice-card {
+    transition: transform 0.3s ease, box-shadow 0.3s ease;
+    border-radius: 12px;
+    overflow: hidden;
+}
+
+.slice-card:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 10px 25px rgba(0,0,0,0.15);
+}
+
+.slice-card .card-footer {
+    background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+}
+
+/* Topology Styles */
+.topology-visual, .topology-icon {
+    font-family: 'Courier New', monospace;
+    white-space: pre-line;
+    font-size: 12px;
+    line-height: 1.2;
+    background: var(--light-color);
+    padding: 15px;
+    border-radius: var(--border-radius);
+    text-align: center;
+    border: 2px dashed #dee2e6;
+}
+
+/* Node and Network Items */
+.node-item, .network-item {
+    background: #fff;
+    border: 2px solid #e9ecef;
+    border-radius: var(--border-radius);
+    padding: 20px;
+    margin-bottom: 15px;
+    transition: var(--transition);
+}
+
+.node-item:hover, .network-item:hover {
+    border-color: var(--primary-color);
+    box-shadow: 0 4px 12px rgba(13, 110, 253, 0.15);
+}
+
+/* Resource Summary */
+.resource-summary {
+    background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%);
+    padding: 15px;
+    border-radius: var(--border-radius);
+    margin-top: 20px;
+    border-left: 4px solid var(--info-color);
+    font-weight: 600;
+}
+
+/* Status Badges */
+.status-active { background-color: var(--success-color) !important; }
+.status-deploying { background-color: var(--warning-color) !important; }
+.status-error { background-color: var(--danger-color) !important; }
+.status-draft { background-color: var(--secondary-color) !important; }
+
+/* Infrastructure Badges */
+.infra-linux { background-color: #fd7e14 !important; }
+.infra-openstack { background-color: #20c997 !important; }
+
+/* Loading Animations */
+.loading-spinner {
+    display: inline-block;
+    width: 20px;
+    height: 20px;
+    border: 3px solid rgba(255,255,255,.3);
+    border-radius: 50%;
+    border-top-color: #fff;
+    animation: spin 1s ease-in-out infinite;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+/* Console Styles */
+.console-container {
+    background: #1a1a1a;
+    border-radius: var(--border-radius);
+    padding: 20px;
+    color: #00ff00;
+    font-family: 'Courier New', monospace;
+    min-height: 400px;
+    overflow-y: auto;
+}
+
+.console-header {
+    background: #333;
+    color: #fff;
+    padding: 10px 15px;
+    border-radius: var(--border-radius) var(--border-radius) 0 0;
+    font-weight: bold;
+}
+
+/* Image Upload */
+.upload-area {
+    border: 3px dashed #dee2e6;
+    border-radius: var(--border-radius);
+    padding: 40px;
+    text-align: center;
+    background: #fafbfc;
+    transition: var(--transition);
+    cursor: pointer;
+}
+
+.upload-area:hover {
+    border-color: var(--primary-color);
+    background: #f0f8ff;
+}
+
+.upload-area.dragover {
+    border-color: var(--success-color);
+    background: #f0fff0;
+}
+
+/* System Resources */
+.resource-gauge {
+    position: relative;
+    height: 150px;
+    margin: 20px 0;
+}
+
+.resource-gauge canvas {
+    max-width: 100%;
+    height: auto;
+}
+
+/* Modal Improvements */
+.modal-content {
+    border-radius: 12px;
+    border: none;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+}
+
+.modal-header {
+    border-bottom: 2px solid var(--light-color);
+    background: linear-gradient(135deg, var(--primary-color) 0%, #0056b3 100%);
+    color: white;
+    border-radius: 12px 12px 0 0;
+}
+
+.modal-header .btn-close {
+    filter: invert(1);
+}
+
+/* Table Styles */
+.table {
+    border-radius: var(--border-radius);
+    overflow: hidden;
+    box-shadow: var(--box-shadow);
+}
+
+.table thead th {
+    background: linear-gradient(135deg, var(--primary-color) 0%, #0056b3 100%);
+    color: white;
+    border: none;
+    font-weight: 600;
+}
+
+.table tbody tr:hover {
+    background-color: rgba(13, 110, 253, 0.05);
+}
+
+/* Utilities */
+.text-gradient {
+    background: linear-gradient(135deg, var(--primary-color) 0%, #0056b3 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+
+.shadow-soft {
+    box-shadow: 0 5px 20px rgba(0,0,0,0.1) !important;
+}
+
+.border-gradient {
+    border: 2px solid;
+    border-image: linear-gradient(135deg, var(--primary-color) 0%, #0056b3 100%) 1;
+}
+
+/* Responsive Adjustments */
+@media (max-width: 768px) {
+    .metric-value {
+        font-size: 1.5rem;
+    }
+    
+    .card {
+        margin-bottom: 1rem;
+    }
+    
+    .btn-group .btn {
+        padding: 0.375rem 0.5rem;
+        font-size: 0.875rem;
+    }
+    
+    .topology-visual {
+        font-size: 10px;
+        padding: 10px;
+    }
+}
+
+@media (max-width: 576px) {
+    .container-fluid {
+        padding: 0.5rem;
+    }
+    
+    .card-body {
+        padding: 1rem;
+    }
+    
+    .btn-group {
+        display: flex;
+        flex-direction: column;
+    }
+    
+    .btn-group .btn {
+        border-radius: var(--border-radius) !important;
+        margin-bottom: 2px;
+    }
+}
+
+/* Dark Mode Support */
+@media (prefers-color-scheme: dark) {
+    :root {
+        --light-color: #2d3748;
+        --dark-color: #f7fafc;
+    }
+    
+    body {
+        background-color: #1a202c;
+        color: #f7fafc;
+    }
+    
+    .card {
+        background-color: #2d3748;
+        color: #f7fafc;
+    }
+    
+    .form-control, .form-select {
+        background-color: #4a5568;
+        border-color: #718096;
+        color: #f7fafc;
+    }
+}
+
+/* Print Styles */
+@media print {
+    .navbar, .card-footer, .btn, .modal {
+        display: none !important;
+    }
+    
+    .card {
+        box-shadow: none;
+        border: 1px solid #dee2e6;
+    }
+    
+    body {
+        background: white;
+        color: black;
+    }
+}

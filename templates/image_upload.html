@@ -1,0 +1,508 @@
+{% extends "base.html" %}
+
+{% block title %}Subir Imagen - PUCP Cloud Orchestrator{% endblock %}
+
+{% block content %}
+<div class="container">
+    <div class="row">
+        <div class="col">
+            <h1><i class="fas fa-cloud-upload-alt"></i> Subir Nueva Imagen</h1>
+            <p class="text-muted">Sube una imagen de VM para usar en tus slices</p>
+        </div>
+    </div>
+
+    <form id="uploadForm" enctype="multipart/form-data">
+        <!-- Información Básica -->
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5><i class="fas fa-info-circle"></i> Información de la Imagen</h5>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-6">
+                        <div class="mb-3">
+                            <label for="imageName" class="form-label">Nombre de la Imagen *</label>
+                            <input type="text" class="form-control" id="imageName" name="name" required>
+                            <div class="form-text">Nombre descriptivo para identificar la imagen</div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="mb-3">
+                            <label for="infrastructure" class="form-label">Infraestructura *</label>
+                            <select class="form-select" id="infrastructure" name="infrastructure" required>
+                                <option value="">Seleccionar infraestructura</option>
+                                <option value="linux">Cluster Linux (Libvirt/KVM)</option>
+                                <option value="openstack">OpenStack</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="mb-3">
+                    <label for="description" class="form-label">Descripción</label>
+                    <textarea class="form-control" id="description" name="description" rows="3" 
+                              placeholder="Describe el sistema operativo, versión, software preinstalado, etc."></textarea>
+                </div>
+                
+                <div class="row">
+                    <div class="col-md-6">
+                        <div class="mb-3">
+                            <label for="osType" class="form-label">Tipo de SO</label>
+                            <select class="form-select" id="osType" name="os_type">
+                                <option value="linux">Linux</option>
+                                <option value="windows">Windows</option>
+                                <option value="other">Otro</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="mb-3">
+                            <label for="osVersion" class="form-label">Versión del SO</label>
+                            <input type="text" class="form-control" id="osVersion" name="os_version" 
+                                   placeholder="ej: 20.04, 22.04, 11, etc.">
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="isPublic" name="is_public">
+                    <label class="form-check-label" for="isPublic">
+                        Hacer imagen pública (otros usuarios podrán usarla)
+                    </label>
+                </div>
+            </div>
+        </div>
+
+        <!-- Subida de Archivo -->
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5><i class="fas fa-file-upload"></i> Archivo de Imagen</h5>
+            </div>
+            <div class="card-body">
+                <div class="upload-area" id="uploadArea">
+                    <div class="upload-content">
+                        <i class="fas fa-cloud-upload-alt fa-3x text-muted mb-3"></i>
+                        <h5>Arrastra tu archivo aquí o haz clic para seleccionar</h5>
+                        <p class="text-muted">Formatos soportados: .qcow2, .vmdk, .img, .raw</p>
+                        <p class="text-muted">Tamaño máximo: 10 GB</p>
+                        <input type="file" id="imageFile" name="file" accept=".qcow2,.vmdk,.img,.raw" style="display: none;">
+                        <button type="button" class="btn btn-outline-primary" onclick="$('#imageFile').click()">
+                            <i class="fas fa-folder-open"></i> Seleccionar Archivo
+                        </button>
+                    </div>
+                </div>
+                
+                <div id="fileInfo" class="mt-3" style="display: none;">
+                    <div class="alert alert-info">
+                        <div class="row align-items-center">
+                            <div class="col">
+                                <strong id="fileName"></strong><br>
+                                <small>Tamaño: <span id="fileSize"></span></small>
+                            </div>
+                            <div class="col-auto">
+                                <button type="button" class="btn btn-sm btn-outline-danger" id="removeFile">
+                                    <i class="fas fa-times"></i> Quitar
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div id="uploadProgress" class="mt-3" style="display: none;">
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <span>Subiendo imagen...</span>
+                        <span id="progressPercent">0%</span>
+                    </div>
+                    <div class="progress">
+                        <div class="progress-bar progress-bar-striped progress-bar-animated" 
+                             id="progressBar" style="width: 0%"></div>
+                    </div>
+                    <div class="mt-2">
+                        <small class="text-muted">
+                            <span id="uploadSpeed">0 MB/s</span> | 
+                            Tiempo restante: <span id="timeRemaining">Calculando...</span>
+                        </small>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Configuración Avanzada -->
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5>
+                    <i class="fas fa-cog"></i> Configuración Avanzada
+                    <button type="button" class="btn btn-sm btn-outline-secondary float-end" data-bs-toggle="collapse" data-bs-target="#advancedConfig">
+                        <i class="fas fa-chevron-down"></i> Mostrar/Ocultar
+                    </button>
+                </h5>
+            </div>
+            <div class="collapse" id="advancedConfig">
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="diskFormat" class="form-label">Formato de Disco</label>
+                                <select class="form-select" id="diskFormat" name="disk_format">
+                                    <option value="qcow2">QCOW2 (recomendado)</option>
+                                    <option value="vmdk">VMDK</option>
+                                    <option value="raw">RAW</option>
+                                    <option value="vhd">VHD</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="containerFormat" class="form-label">Formato de Contenedor</label>
+                                <select class="form-select" id="containerFormat" name="container_format">
+                                    <option value="bare">Bare (sin contenedor)</option>
+                                    <option value="ovf">OVF</option>
+                                    <option value="ova">OVA</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="minDisk" class="form-label">Disco Mínimo (GB)</label>
+                                <input type="number" class="form-control" id="minDisk" name="min_disk" 
+                                       value="1" min="1" max="1000">
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="minRam" class="form-label">RAM Mínima (MB)</label>
+                                <input type="number" class="form-control" id="minRam" name="min_ram" 
+                                       value="512" min="128" max="65536">
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label class="form-label">Propiedades de Hardware</label>
+                        <div class="row">
+                            <div class="col-md-4">
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" id="virtioNet" name="hw_virtio_net" checked>
+                                    <label class="form-check-label" for="virtioNet">
+                                        VirtIO Network
+                                    </label>
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" id="virtioDisk" name="hw_virtio_disk" checked>
+                                    <label class="form-check-label" for="virtioDisk">
+                                        VirtIO Disk
+                                    </label>
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" id="acpi" name="hw_acpi" checked>
+                                    <label class="form-check-label" for="acpi">
+                                        ACPI Support
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Botones -->
+        <div class="row">
+            <div class="col">
+                <div class="d-flex gap-2">
+                    <button type="submit" class="btn btn-primary" id="uploadBtn">
+                        <i class="fas fa-cloud-upload-alt"></i> Subir Imagen
+                    </button>
+                    <button type="button" class="btn btn-outline-secondary" id="validateBtn">
+                        <i class="fas fa-check-circle"></i> Validar Imagen
+                    </button>
+                    <a href="{{ url_for('list_images') }}" class="btn btn-secondary">
+                        <i class="fas fa-times"></i> Cancelar
+                    </a>
+                </div>
+            </div>
+        </div>
+    </form>
+</div>
+
+<style>
+.upload-area {
+    border: 3px dashed #dee2e6;
+    border-radius: 12px;
+    padding: 40px;
+    text-align: center;
+    background: #fafbfc;
+    transition: all 0.3s ease;
+    cursor: pointer;
+}
+
+.upload-area:hover {
+    border-color: var(--bs-primary);
+    background: #f0f8ff;
+}
+
+.upload-area.dragover {
+    border-color: var(--bs-success);
+    background: #f0fff0;
+    transform: scale(1.02);
+}
+
+.upload-content {
+    pointer-events: none;
+}
+
+#uploadProgress .progress {
+    height: 8px;
+}
+</style>
+
+{% block extra_js %}
+<script>
+$(document).ready(function() {
+    let selectedFile = null;
+    let uploadXHR = null;
+    
+    // Drag and drop functionality
+    const uploadArea = $('#uploadArea');
+    
+    uploadArea.on('click', function() {
+        $('#imageFile').click();
+    });
+    
+    uploadArea.on('dragover', function(e) {
+        e.preventDefault();
+        $(this).addClass('dragover');
+    });
+    
+    uploadArea.on('dragleave', function(e) {
+        e.preventDefault();
+        $(this).removeClass('dragover');
+    });
+    
+    uploadArea.on('drop', function(e) {
+        e.preventDefault();
+        $(this).removeClass('dragover');
+        
+        const files = e.originalEvent.dataTransfer.files;
+        if (files.length > 0) {
+            handleFileSelect(files[0]);
+        }
+    });
+    
+    $('#imageFile').change(function() {
+        if (this.files.length > 0) {
+            handleFileSelect(this.files[0]);
+        }
+    });
+    
+    $('#removeFile').click(function() {
+        selectedFile = null;
+        $('#imageFile').val('');
+        $('#fileInfo').hide();
+        $('#uploadProgress').hide();
+    });
+    
+    $('#uploadForm').submit(function(e) {
+        e.preventDefault();
+        uploadImage();
+    });
+    
+    $('#validateBtn').click(function() {
+        if (selectedFile) {
+            validateImage(selectedFile);
+        } else {
+            PUCP.showAlert('warning', 'Por favor selecciona un archivo primero');
+        }
+    });
+    
+    function handleFileSelect(file) {
+        // Validar tipo de archivo
+        const allowedTypes = ['.qcow2', '.vmdk', '.img', '.raw'];
+        const fileName = file.name.toLowerCase();
+        const isValidType = allowedTypes.some(type => fileName.endsWith(type));
+        
+        if (!isValidType) {
+            PUCP.showAlert('error', 'Tipo de archivo no soportado. Use: .qcow2, .vmdk, .img, .raw');
+            return;
+        }
+        
+        // Validar tamaño (10GB máximo)
+        const maxSize = 10 * 1024 * 1024 * 1024; // 10GB
+        if (file.size > maxSize) {
+            PUCP.showAlert('error', 'El archivo es demasiado grande. Máximo: 10GB');
+            return;
+        }
+        
+        selectedFile = file;
+        
+        // Mostrar información del archivo
+        $('#fileName').text(file.name);
+        $('#fileSize').text(PUCP.formatBytes(file.size));
+        $('#fileInfo').show();
+        
+        // Auto-llenar nombre si está vacío
+        if (!$('#imageName').val()) {
+            const baseName = file.name.replace(/\.[^/.]+$/, "");
+            $('#imageName').val(baseName);
+        }
+    }
+    
+    function validateImage(file) {
+        const spinnerId = PUCP.showSpinner('Validando imagen...');
+        
+        // Simular validación
+        setTimeout(() => {
+            PUCP.hideSpinner(spinnerId);
+            
+            const validation = {
+                isValid: true,
+                format: 'qcow2',
+                virtualSize: '5.2 GB',
+                actualSize: file.size,
+                compression: true,
+                warnings: [],
+                errors: []
+            };
+            
+            // Mostrar resultados de validación
+            let alertType = 'success';
+            let message = `
+                <strong>Validación exitosa</strong><br>
+                Formato: ${validation.format}<br>
+                Tamaño virtual: ${validation.virtualSize}<br>
+                Tamaño real: ${PUCP.formatBytes(validation.actualSize)}<br>
+                Compresión: ${validation.compression ? 'Sí' : 'No'}
+            `;
+            
+            if (validation.warnings.length > 0) {
+                alertType = 'warning';
+                message += '<br><strong>Advertencias:</strong><ul>';
+                validation.warnings.forEach(warning => {
+                    message += `<li>${warning}</li>`;
+                });
+                message += '</ul>';
+            }
+            
+            PUCP.showAlert(alertType, message, 8000);
+        }, 2000);
+    }
+    
+    function uploadImage() {
+        if (!selectedFile) {
+            PUCP.showAlert('error', 'Por favor selecciona un archivo');
+            return;
+        }
+        
+        if (!$('#imageName').val() || !$('#infrastructure').val()) {
+            PUCP.showAlert('error', 'Por favor completa los campos requeridos');
+            return;
+        }
+        
+        const formData = new FormData();
+        formData.append('file', selectedFile);
+        formData.append('name', $('#imageName').val());
+        formData.append('description', $('#description').val());
+        formData.append('infrastructure', $('#infrastructure').val());
+        formData.append('os_type', $('#osType').val());
+        formData.append('os_version', $('#osVersion').val());
+        formData.append('is_public', $('#isPublic').is(':checked'));
+        formData.append('disk_format', $('#diskFormat').val());
+        formData.append('container_format', $('#containerFormat').val());
+        formData.append('min_disk', $('#minDisk').val());
+        formData.append('min_ram', $('#minRam').val());
+        
+        // Mostrar progreso
+        $('#uploadProgress').show();
+        $('#uploadBtn').prop('disabled', true);
+        
+        const startTime = Date.now();
+        let lastLoaded = 0;
+        
+        uploadXHR = $.ajax({
+            url: '/api/images',
+            type: 'POST',
+            data: formData,
+            processData: false,
+            contentType: false,
+            xhr: function() {
+                const xhr = new window.XMLHttpRequest();
+                
+                xhr.upload.addEventListener('progress', function(e) {
+                    if (e.lengthComputable) {
+                        const percentComplete = (e.loaded / e.total) * 100;
+                        const currentTime = Date.now();
+                        const elapsedTime = (currentTime - startTime) / 1000;
+                        const uploadSpeed = (e.loaded - lastLoaded) / elapsedTime || 0;
+                        const remainingBytes = e.total - e.loaded;
+                        const timeRemaining = remainingBytes / uploadSpeed;
+                        
+                        $('#progressBar').css('width', percentComplete + '%');
+                        $('#progressPercent').text(Math.round(percentComplete) + '%');
+                        
+                        if (uploadSpeed > 0) {
+                            $('#uploadSpeed').text(PUCP.formatBytes(uploadSpeed) + '/s');
+                            $('#timeRemaining').text(formatTime(timeRemaining));
+                        }
+                        
+                        lastLoaded = e.loaded;
+                    }
+                });
+                
+                return xhr;
+            },
+            success: function(response) {
+                $('#uploadProgress').hide();
+                $('#uploadBtn').prop('disabled', false);
+                
+                if (response.success) {
+                    PUCP.showAlert('success', 'Imagen subida exitosamente');
+                    setTimeout(() => {
+                        window.location.href = '/images';
+                    }, 2000);
+                } else {
+                    PUCP.showAlert('error', response.error || 'Error subiendo imagen');
+                }
+            },
+            error: function(xhr) {
+                $('#uploadProgress').hide();
+                $('#uploadBtn').prop('disabled', false);
+                
+                const error = xhr.responseJSON?.error || 'Error de conexión';
+                PUCP.showAlert('error', error);
+            }
+        });
+    }
+    
+    function formatTime(seconds) {
+        if (!isFinite(seconds)) return 'Calculando...';
+        
+        const hours = Math.floor(seconds / 3600);
+        const minutes = Math.floor((seconds % 3600) / 60);
+        const secs = Math.floor(seconds % 60);
+        
+        if (hours > 0) {
+            return `${hours}h ${minutes}m ${secs}s`;
+        } else if (minutes > 0) {
+            return `${minutes}m ${secs}s`;
+        } else {
+            return `${secs}s`;
+        }
+    }
+    
+    // Cancelar upload si el usuario sale de la página
+    $(window).on('beforeunload', function() {
+        if (uploadXHR && uploadXHR.readyState !== 4) {
+            uploadXHR.abort();
+        }
+    });
+});
+</script>
+{% endblock %}
+{% endblock %}

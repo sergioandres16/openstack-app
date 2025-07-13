@@ -1,0 +1,44 @@
+# PUCP Cloud Orchestrator - Python Dependencies
+
+# Web Framework
+Flask==2.3.3
+Flask-CORS==4.0.0
+
+# Authentication & Security
+PyJWT==2.8.0
+bcrypt==4.0.1
+cryptography==41.0.4
+
+# Database
+sqlite3  # Built-in with Python
+
+# HTTP Requests
+requests==2.31.0
+urllib3==2.0.4
+
+# SSH & Network
+paramiko==3.3.1
+pexpect==4.8.0
+
+# OpenStack SDK (optional, for advanced integration)
+python-openstackclient==6.2.0
+python-keystoneclient==5.1.0
+python-novaclient==18.3.0
+python-neutronclient==9.0.0
+python-glanceclient==4.3.0
+
+# Utilities
+python-dotenv==1.0.0
+click==8.1.7
+python-dateutil==2.8.2
+
+# Development & Testing (optional)
+pytest==7.4.2
+pytest-flask==1.2.0
+coverage==7.3.1
+
+# Logging
+colorlog==6.7.0
+
+# Process management
+psutil==5.9.5

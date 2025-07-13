@@ -1,0 +1,394 @@
+{% extends "base.html" %}
+
+{% block title %}Gestión de Imágenes - PUCP Cloud Orchestrator{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row mb-4">
+        <div class="col">
+            <div class="d-flex justify-content-between align-items-center">
+                <div>
+                    <h1><i class="fas fa-compact-disc"></i> Gestión de Imágenes</h1>
+                    <p class="text-muted">Administra las imágenes de VMs disponibles para tus slices</p>
+                </div>
+                <div>
+                    <a href="{{ url_for('upload_image_form') }}" class="btn btn-primary">
+                        <i class="fas fa-cloud-upload-alt"></i> Subir Nueva Imagen
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Filtros -->
+    <div class="row mb-4">
+        <div class="col">
+            <div class="card">
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-3">
+                            <select class="form-select" id="filterInfrastructure">
+                                <option value="">Todas las infraestructuras</option>
+                                <option value="linux">Linux Cluster</option>
+                                <option value="openstack">OpenStack</option>
+                            </select>
+                        </div>
+                        <div class="col-md-3">
+                            <select class="form-select" id="filterStatus">
+                                <option value="">Todos los estados</option>
+                                <option value="available">Disponible</option>
+                                <option value="uploading">Subiendo</option>
+                                <option value="error">Error</option>
+                            </select>
+                        </div>
+                        <div class="col-md-3">
+                            <select class="form-select" id="filterVisibility">
+                                <option value="">Todas las visibilidades</option>
+                                <option value="public">Públicas</option>
+                                <option value="private">Privadas</option>
+                            </select>
+                        </div>
+                        <div class="col-md-3">
+                            <input type="text" class="form-control" id="searchImages" placeholder="Buscar imágenes...">
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    {% if images %}
+    <div class="row">
+        {% for image in images %}
+        <div class="col-md-6 col-lg-4 mb-4 image-card" 
+             data-infrastructure="{{ image.infrastructure or 'unknown' }}"
+             data-status="{{ image.status or 'available' }}"
+             data-visibility="{{ 'public' if image.is_public else 'private' }}">
+            <div class="card h-100">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h6 class="mb-0">
+                        <i class="fas fa-compact-disc"></i> {{ image.name }}
+                    </h6>
+                    <div>
+                        <span class="badge bg-{{ 'success' if image.status == 'available' else 'warning' if image.status == 'uploading' else 'danger' }}">
+                            {{ (image.status or 'available').title() }}
+                        </span>
+                        {% if image.is_public %}
+                        <span class="badge bg-info">
+                            <i class="fas fa-globe"></i> Pública
+                        </span>
+                        {% else %}
+                        <span class="badge bg-secondary">
+                            <i class="fas fa-lock"></i> Privada
+                        </span>
+                        {% endif %}
+                    </div>
+                </div>
+                
+                <div class="card-body">
+                    {% if image.description %}
+                    <p class="text-muted small">{{ image.description }}</p>
+                    {% endif %}
+                    
+                    <div class="row">
+                        <div class="col-6">
+                            <small><strong>Tamaño:</strong></small><br>
+                            <span class="text-primary">{{ "%.1f"|format((image.size or 0) / (1024*1024*1024)) }} GB</span>
+                        </div>
+                        <div class="col-6">
+                            <small><strong>Formato:</strong></small><br>
+                            <span class="text-info">{{ image.disk_format or 'qcow2' }}</span>
+                        </div>
+                    </div>
+                    
+                    {% if image.infrastructure %}
+                    <div class="mt-2">
+                        <small><strong>Infraestructura:</strong></small>
+                        <span class="badge bg-{{ 'primary' if image.infrastructure == 'linux' else 'success' }}">
+                            <i class="fas fa-{{ 'server' if image.infrastructure == 'linux' else 'cloud' }}"></i>
+                            {{ image.infrastructure.title() }}
+                        </span>
+                    </div>
+                    {% endif %}
+                    
+                    <div class="mt-3">
+                        <small class="text-muted">
+                            <i class="fas fa-calendar"></i> 
+                            {{ image.created_at[:10] if image.created_at else 'N/A' }}
+                        </small>
+                    </div>
+                </div>
+                
+                <div class="card-footer">
+                    <div class="btn-group w-100" role="group">
+                        <button class="btn btn-outline-primary btn-sm info-btn" 
+                                data-image-id="{{ image.id }}"
+                                data-image-name="{{ image.name }}">
+                            <i class="fas fa-info-circle"></i> Info
+                        </button>
+                        
+                        {% if image.status == 'available' %}
+                        <button class="btn btn-outline-success btn-sm use-btn"
+                                data-image-name="{{ image.name }}"
+                                data-bs-toggle="tooltip"
+                                title="Usar en nuevo slice">
+                            <i class="fas fa-play"></i> Usar
+                        </button>
+                        {% endif %}
+                        
+                        {% if not image.is_public %}
+                        <button class="btn btn-outline-danger btn-sm delete-btn" 
+                                data-image-id="{{ image.id }}"
+                                data-image-name="{{ image.name }}">
+                            <i class="fas fa-trash"></i> Eliminar
+                        </button>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    
+    {% else %}
+    <div class="row">
+        <div class="col">
+            <div class="card">
+                <div class="card-body text-center py-5">
+                    <i class="fas fa-compact-disc fa-4x text-muted mb-3"></i>
+                    <h4>No hay imágenes disponibles</h4>
+                    <p class="text-muted">Sube tu primera imagen de VM para comenzar</p>
+                    
+                    <div class="mt-4">
+                        <a href="{{ url_for('upload_image_form') }}" class="btn btn-primary">
+                            <i class="fas fa-cloud-upload-alt"></i> Subir Primera Imagen
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+</div>
+
+<!-- Modal de Información de Imagen -->
+<div class="modal fade" id="imageInfoModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Información de la Imagen</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div id="imageInfoContent"></div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cerrar</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal de Confirmación de Eliminación -->
+<div class="modal fade" id="deleteImageModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Confirmar Eliminación</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p>¿Estás seguro de que deseas eliminar la imagen <strong id="deleteImageName"></strong>?</p>
+                <div class="alert alert-warning">
+                    <i class="fas fa-exclamation-triangle"></i>
+                    <strong>Advertencia:</strong> Esta acción no se puede deshacer.
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                <button type="button" class="btn btn-danger" id="confirmDeleteImageBtn">
+                    <i class="fas fa-trash"></i> Eliminar
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+.image-card {
+    transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.image-card:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 8px 25px rgba(0,0,0,0.15);
+}
+
+.image-card .card {
+    border-radius: 12px;
+    overflow: hidden;
+}
+
+.filtered-out {
+    display: none !important;
+}
+</style>
+
+{% block extra_js %}
+<script>
+$(document).ready(function() {
+    let selectedImageId = null;
+    
+    // Filtros
+    $('#filterInfrastructure, #filterStatus, #filterVisibility').change(filterImages);
+    $('#searchImages').on('input', filterImages);
+    
+    // Event handlers
+    $('.info-btn').click(function() {
+        const imageId = $(this).data('image-id');
+        const imageName = $(this).data('image-name');
+        showImageInfo(imageId, imageName);
+    });
+    
+    $('.use-btn').click(function() {
+        const imageName = $(this).data('image-name');
+        useImageInSlice(imageName);
+    });
+    
+    $('.delete-btn').click(function() {
+        selectedImageId = $(this).data('image-id');
+        const imageName = $(this).data('image-name');
+        $('#deleteImageName').text(imageName);
+        $('#deleteImageModal').modal('show');
+    });
+    
+    $('#confirmDeleteImageBtn').click(function() {
+        if (selectedImageId) {
+            deleteImage(selectedImageId);
+        }
+    });
+    
+    function filterImages() {
+        const infraFilter = $('#filterInfrastructure').val();
+        const statusFilter = $('#filterStatus').val();
+        const visibilityFilter = $('#filterVisibility').val();
+        const searchTerm = $('#searchImages').val().toLowerCase();
+        
+        $('.image-card').each(function() {
+            const card = $(this);
+            const infrastructure = card.data('infrastructure');
+            const status = card.data('status');
+            const visibility = card.data('visibility');
+            const name = card.find('.card-header h6').text().toLowerCase();
+            
+            let show = true;
+            
+            if (infraFilter && infrastructure !== infraFilter) show = false;
+            if (statusFilter && status !== statusFilter) show = false;
+            if (visibilityFilter && visibility !== visibilityFilter) show = false;
+            if (searchTerm && !name.includes(searchTerm)) show = false;
+            
+            if (show) {
+                card.removeClass('filtered-out');
+            } else {
+                card.addClass('filtered-out');
+            }
+        });
+    }
+    
+    function showImageInfo(imageId, imageName) {
+        $('#imageInfoContent').html(`
+            <div class="text-center">
+                <div class="spinner-border" role="status">
+                    <span class="visually-hidden">Cargando...</span>
+                </div>
+                <p>Cargando información de la imagen...</p>
+            </div>
+        `);
+        
+        $('#imageInfoModal').modal('show');
+        
+        // Simular carga de información detallada
+        setTimeout(() => {
+            const infoHtml = `
+                <div class="row">
+                    <div class="col-md-6">
+                        <h6><i class="fas fa-info-circle"></i> Detalles Básicos</h6>
+                        <table class="table table-sm">
+                            <tr><td><strong>Nombre:</strong></td><td>${imageName}</td></tr>
+                            <tr><td><strong>ID:</strong></td><td>${imageId}</td></tr>
+                            <tr><td><strong>Estado:</strong></td><td><span class="badge bg-success">Disponible</span></td></tr>
+                            <tr><td><strong>Visibilidad:</strong></td><td>Pública</td></tr>
+                        </table>
+                    </div>
+                    <div class="col-md-6">
+                        <h6><i class="fas fa-cog"></i> Especificaciones</h6>
+                        <table class="table table-sm">
+                            <tr><td><strong>Tamaño:</strong></td><td>2.1 GB</td></tr>
+                            <tr><td><strong>Formato:</strong></td><td>qcow2</td></tr>
+                            <tr><td><strong>SO:</strong></td><td>Ubuntu 20.04 LTS</td></tr>
+                            <tr><td><strong>Arquitectura:</strong></td><td>x86_64</td></tr>
+                        </table>
+                    </div>
+                </div>
+                
+                <hr>
+                
+                <div class="row">
+                    <div class="col">
+                        <h6><i class="fas fa-list"></i> Propiedades</h6>
+                        <div class="table-responsive">
+                            <table class="table table-sm">
+                                <thead>
+                                    <tr>
+                                        <th>Propiedad</th>
+                                        <th>Valor</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr><td>hw_disk_bus</td><td>virtio</td></tr>
+                                    <tr><td>hw_net_model</td><td>virtio</td></tr>
+                                    <tr><td>hw_vif_multiqueue_enabled</td><td>true</td></tr>
+                                    <tr><td>os_type</td><td>linux</td></tr>
+                                    <tr><td>os_distro</td><td>ubuntu</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            `;
+            
+            $('#imageInfoContent').html(infoHtml);
+        }, 1000);
+    }
+    
+    function useImageInSlice(imageName) {
+        // Redirigir a crear slice con imagen preseleccionada
+        window.location.href = `/slice/create?image=${imageName}`;
+    }
+    
+    function deleteImage(imageId) {
+        $('#deleteImageModal').modal('hide');
+        
+        const spinnerId = PUCP.showSpinner('Eliminando imagen...');
+        
+        // Simular eliminación
+        setTimeout(() => {
+            PUCP.hideSpinner(spinnerId);
+            PUCP.showAlert('success', 'Imagen eliminada exitosamente');
+            
+            // Remover card de la página
+            $(`.image-card:has([data-image-id="${imageId}"])`).fadeOut(500, function() {
+                $(this).remove();
+                
+                // Si no quedan imágenes, recargar
+                if ($('.image-card:visible').length === 0) {
+                    location.reload();
+                }
+            });
+        }, 2000);
+    }
+});
+</script>
+{% endblock %}
+{% endblock %}

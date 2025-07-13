@@ -1,0 +1,313 @@
+{% extends "base.html" %}
+
+{% block title %}Crear Slice - PUCP Cloud Orchestrator{% endblock %}
+
+{% block content %}
+<div class="container">
+    <div class="row">
+        <div class="col">
+            <h1><i class="fas fa-plus"></i> Crear Nuevo Slice</h1>
+            <p class="text-muted">Configure su slice con la topología seleccionada: <strong>{{ topologies[topology].name }}</strong></p>
+        </div>
+    </div>
+
+    <form id="sliceForm">
+        <!-- Información Básica -->
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5><i class="fas fa-info-circle"></i> Información Básica</h5>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-6">
+                        <div class="mb-3">
+                            <label for="sliceName" class="form-label">Nombre del Slice *</label>
+                            <input type="text" class="form-control" id="sliceName" name="name" required>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="mb-3">
+                            <label for="infrastructure" class="form-label">Infraestructura *</label>
+                            <select class="form-select" id="infrastructure" name="infrastructure" required>
+                                <option value="linux">Cluster Linux (Libvirt/KVM)</option>
+                                <option value="openstack">OpenStack</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="mb-3">
+                    <label for="description" class="form-label">Descripción</label>
+                    <textarea class="form-control" id="description" name="description" rows="3" 
+                              placeholder="Describe el propósito de este slice..."></textarea>
+                </div>
+            </div>
+        </div>
+
+        <!-- Configuración de Topología -->
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5><i class="fas fa-project-diagram"></i> Configuración de Topología</h5>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-8">
+                        <div class="mb-3">
+                            <label for="topologyType" class="form-label">Tipo de Topología</label>
+                            <select class="form-select" id="topologyType" name="topology_type">
+                                {% for topo_id, topo in topologies.items() %}
+                                <option value="{{ topo_id }}" {{ 'selected' if topo_id == topology else '' }}>
+                                    {{ topo.name }} - {{ topo.description }}
+                                </option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label for="nodeCount" class="form-label">Número de Nodos</label>
+                            <input type="number" class="form-control" id="nodeCount" name="node_count" 
+                                   value="3" min="{{ topologies[topology].min_nodes }}" 
+                                   max="{{ topologies[topology].max_nodes }}">
+                            <div class="form-text">
+                                Mínimo: {{ topologies[topology].min_nodes }}, 
+                                Máximo: {{ topologies[topology].max_nodes }}
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="col-md-4">
+                        <div class="card bg-light">
+                            <div class="card-body text-center">
+                                <h6>{{ topologies[topology].name }}</h6>
+                                <div class="topology-visual">{{ topologies[topology].icon }}</div>
+                                <p class="small">{{ topologies[topology].description }}</p>
+                                
+                                <div class="mt-3">
+                                    <strong>Casos de uso:</strong>
+                                    <ul class="list-unstyled small">
+                                        {% for use_case in topologies[topology].use_cases %}
+                                        <li>• {{ use_case }}</li>
+                                        {% endfor %}
+                                    </ul>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="row">
+                    <div class="col">
+                        <button type="button" class="btn btn-secondary" id="generateTopology">
+                            <i class="fas fa-magic"></i> Generar Topología Automáticamente
+                        </button>
+                        <button type="button" class="btn btn-outline-secondary" id="customizeNodes">
+                            <i class="fas fa-cogs"></i> Personalizar Nodos
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Configuración de Nodos -->
+        <div class="card mb-4" id="nodesCard" style="display: none;">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5><i class="fas fa-server"></i> Configuración de Nodos</h5>
+                <button type="button" class="btn btn-sm btn-primary" id="addNode">
+                    <i class="fas fa-plus"></i> Agregar Nodo
+                </button>
+            </div>
+            <div class="card-body">
+                <div id="nodesList"></div>
+            </div>
+        </div>
+
+        <!-- Configuración de Redes -->
+        <div class="card mb-4" id="networksCard" style="display: none;">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5><i class="fas fa-network-wired"></i> Configuración de Redes</h5>
+                <button type="button" class="btn btn-sm btn-success" id="addNetwork">
+                    <i class="fas fa-plus"></i> Agregar Red
+                </button>
+            </div>
+            <div class="card-body">
+                <div id="networksList"></div>
+            </div>
+        </div>
+
+        <!-- Vista Previa -->
+        <div class="card mb-4" id="previewCard" style="display: none;">
+            <div class="card-header">
+                <h5><i class="fas fa-eye"></i> Vista Previa</h5>
+            </div>
+            <div class="card-body">
+                <div id="slicePreview"></div>
+            </div>
+        </div>
+
+        <!-- Botones de Acción -->
+        <div class="row">
+            <div class="col">
+                <div class="d-flex gap-2">
+                    <button type="submit" class="btn btn-primary">
+                        <i class="fas fa-save"></i> Crear Slice
+                    </button>
+                    <button type="button" class="btn btn-outline-primary" id="previewSlice">
+                        <i class="fas fa-eye"></i> Vista Previa
+                    </button>
+                    <a href="{{ url_for('dashboard') }}" class="btn btn-secondary">
+                        <i class="fas fa-times"></i> Cancelar
+                    </a>
+                </div>
+            </div>
+        </div>
+    </form>
+</div>
+
+<!-- Modal para configuración de nodo -->
+<div class="modal fade" id="nodeConfigModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Configurar Nodo</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="nodeConfigForm">
+                    <div class="mb-3">
+                        <label for="nodeName" class="form-label">Nombre del Nodo</label>
+                        <input type="text" class="form-control" id="nodeName" required>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="nodeImage" class="form-label">Imagen del Sistema</label>
+                        <select class="form-select" id="nodeImage" required>
+                            <option value="ubuntu-20.04">Ubuntu 20.04 LTS</option>
+                            <option value="ubuntu-22.04">Ubuntu 22.04 LTS</option>
+                            <option value="centos-8">CentOS 8 Stream</option>
+                            <option value="alpine">Alpine Linux</option>
+                        </select>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="nodeFlavor" class="form-label">Capacidad de la VM</label>
+                        <select class="form-select" id="nodeFlavor" required>
+                            {% for flavor_id, flavor in flavors.items() %}
+                            <option value="{{ flavor_id }}" data-vcpus="{{ flavor.vcpus }}" 
+                                    data-ram="{{ flavor.ram }}" data-disk="{{ flavor.disk }}">
+                                {{ flavor.description }}
+                            </option>
+                            {% endfor %}
+                        </select>
+                        <div class="form-text" id="flavorDetails"></div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="internetAccess">
+                            <label class="form-check-label" for="internetAccess">
+                                Acceso a Internet
+                            </label>
+                        </div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="managementIp" class="form-label">IP de Gestión (opcional)</label>
+                        <input type="text" class="form-control" id="managementIp" 
+                               placeholder="192.168.1.100">
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                <button type="button" class="btn btn-primary" id="saveNodeConfig">Guardar</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal para configuración de red -->
+<div class="modal fade" id="networkConfigModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Configurar Red</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="networkConfigForm">
+                    <div class="mb-3">
+                        <label for="networkName" class="form-label">Nombre de la Red</label>
+                        <input type="text" class="form-control" id="networkName" required>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="networkCidr" class="form-label">CIDR</label>
+                        <input type="text" class="form-control" id="networkCidr" 
+                               placeholder="192.168.1.0/24" required>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="networkType" class="form-label">Tipo de Red</label>
+                        <select class="form-select" id="networkType" required>
+                            <option value="data">Red de Datos</option>
+                            <option value="management">Red de Gestión</option>
+                            <option value="external">Red Externa</option>
+                        </select>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="networkInternet">
+                            <label class="form-check-label" for="networkInternet">
+                                Acceso a Internet
+                            </label>
+                        </div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="networkGateway" class="form-label">Gateway (opcional)</label>
+                        <input type="text" class="form-control" id="networkGateway" 
+                               placeholder="192.168.1.1">
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                <button type="button" class="btn btn-success" id="saveNetworkConfig">Guardar</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+.topology-visual {
+    font-family: monospace;
+    white-space: pre-line;
+    font-size: 12px;
+    line-height: 1.2;
+    background: #f8f9fa;
+    padding: 10px;
+    border-radius: 5px;
+    margin: 10px 0;
+}
+
+.node-item, .network-item {
+    border: 1px solid #dee2e6;
+    border-radius: 8px;
+    padding: 15px;
+    margin-bottom: 10px;
+    background: #f8f9fa;
+}
+
+.resource-summary {
+    background: #e3f2fd;
+    padding: 10px;
+    border-radius: 5px;
+    margin-top: 10px;
+}
+</style>
+
+{% block extra_js %}
+<script src="{{ url_for('static', filename='js/slice-create.js') }}"></script>
+{% endblock %}
+{% endblock %}

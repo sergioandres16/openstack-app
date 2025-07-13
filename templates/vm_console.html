@@ -1,0 +1,566 @@
+{% extends "base.html" %}
+
+{% block title %}Consola VM - PUCP Cloud Orchestrator{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row mb-3">
+        <div class="col">
+            <div class="d-flex justify-content-between align-items-center">
+                <div>
+                    <h1><i class="fas fa-terminal"></i> Consola de VM</h1>
+                    <p class="text-muted">VM ID: {{ vm_id }}</p>
+                </div>
+                <div>
+                    <button class="btn btn-outline-secondary" id="fullscreenBtn">
+                        <i class="fas fa-expand"></i> Pantalla Completa
+                    </button>
+                    <button class="btn btn-outline-primary" id="reconnectBtn">
+                        <i class="fas fa-sync-alt"></i> Reconectar
+                    </button>
+                    <button class="btn btn-outline-danger" id="disconnectBtn">
+                        <i class="fas fa-times"></i> Desconectar
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Console Information -->
+    <div class="row mb-3">
+        <div class="col">
+            <div class="card">
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-3">
+                            <strong>Tipo de Consola:</strong><br>
+                            <span class="badge bg-info">{{ console_data.console_type.upper() }}</span>
+                        </div>
+                        <div class="col-md-3">
+                            <strong>Estado:</strong><br>
+                            <span class="badge bg-success" id="connectionStatus">Conectando...</span>
+                        </div>
+                        <div class="col-md-3">
+                            <strong>Token Expira:</strong><br>
+                            <small class="text-muted">{{ console_data.expires_at[:16] if console_data.expires_at else 'N/A' }}</small>
+                        </div>
+                        <div class="col-md-3">
+                            <strong>Credenciales:</strong><br>
+                            <button class="btn btn-sm btn-outline-info" data-bs-toggle="modal" data-bs-target="#credentialsModal">
+                                <i class="fas fa-key"></i> Ver Credenciales
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Console Container -->
+    <div class="row">
+        <div class="col">
+            <div class="card">
+                <div class="console-header">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div>
+                            <i class="fas fa-terminal"></i> 
+                            Consola Virtual - VM {{ vm_id[:8] }}...
+                        </div>
+                        <div class="btn-group btn-group-sm">
+                            <button class="btn btn-outline-light" id="ctrlAltDelBtn" title="Enviar Ctrl+Alt+Del">
+                                <i class="fas fa-keyboard"></i> Ctrl+Alt+Del
+                            </button>
+                            <button class="btn btn-outline-light" id="screenshotBtn" title="Capturar pantalla">
+                                <i class="fas fa-camera"></i>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                <div class="console-container" id="consoleContainer">
+                    {% if console_data.console_type == 'novnc' %}
+                    <!-- noVNC Console -->
+                    <div id="noVncContainer">
+                        <div class="console-loading">
+                            <div class="text-center py-5">
+                                <div class="spinner-border text-primary mb-3" role="status">
+                                    <span class="visually-hidden">Conectando...</span>
+                                </div>
+                                <h5>Conectando a la consola...</h5>
+                                <p class="text-muted">Estableciendo conexión VNC</p>
+                            </div>
+                        </div>
+                        <iframe id="vncFrame" 
+                                src="{{ console_data.console_url }}" 
+                                width="100%" 
+                                height="600"
+                                frameborder="0"
+                                style="display: none;">
+                        </iframe>
+                    </div>
+                    {% elif console_data.console_type == 'serial' %}
+                    <!-- Serial Console -->
+                    <div id="serialConsole" class="terminal">
+                        <div class="terminal-output" id="terminalOutput"></div>
+                        <div class="terminal-input">
+                            <span class="prompt">$ </span>
+                            <input type="text" id="commandInput" class="terminal-input-field" placeholder="Escriba un comando...">
+                        </div>
+                    </div>
+                    {% else %}
+                    <!-- Fallback Console -->
+                    <div class="console-fallback">
+                        <div class="text-center py-5">
+                            <i class="fas fa-exclamation-triangle fa-3x text-warning mb-3"></i>
+                            <h5>Tipo de consola no soportado</h5>
+                            <p class="text-muted">El tipo de consola "{{ console_data.console_type }}" no está disponible</p>
+                            <button class="btn btn-primary" onclick="window.close()">
+                                <i class="fas fa-arrow-left"></i> Volver
+                            </button>
+                        </div>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Console Tips -->
+    <div class="row mt-3">
+        <div class="col">
+            <div class="card">
+                <div class="card-header">
+                    <h6><i class="fas fa-lightbulb"></i> Consejos de Uso</h6>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-6">
+                            <h6>Atajos de Teclado:</h6>
+                            <ul class="list-unstyled small">
+                                <li><kbd>Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>Del</kbd> - Reinicio forzado</li>
+                                <li><kbd>Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>F1-F6</kbd> - Cambiar terminal</li>
+                                <li><kbd>Alt</kbd> + <kbd>Tab</kbd> - Cambiar ventana</li>
+                            </ul>
+                        </div>
+                        <div class="col-md-6">
+                            <h6>Problemas Comunes:</h6>
+                            <ul class="list-unstyled small">
+                                <li>• Si la consola no responde, use "Reconectar"</li>
+                                <li>• Para enviar Ctrl+Alt+Del, use el botón específico</li>
+                                <li>• La conexión expira automáticamente después de 1 hora</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal de Credenciales -->
+<div class="modal fade" id="credentialsModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="fas fa-key"></i> Credenciales de Acceso</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="alert alert-info">
+                    <i class="fas fa-info-circle"></i>
+                    <strong>Información:</strong> {{ console_data.instructions or 'Use las credenciales por defecto de la imagen.' }}
+                </div>
+                
+                <div class="mb-3">
+                    <label class="form-label"><strong>Usuario:</strong></label>
+                    <div class="input-group">
+                        <input type="text" class="form-control" value="{{ console_data.username or 'ubuntu' }}" readonly>
+                        <button class="btn btn-outline-secondary" type="button" onclick="copyToClipboard('{{ console_data.username or 'ubuntu' }}')">
+                            <i class="fas fa-copy"></i>
+                        </button>
+                    </div>
+                </div>
+                
+                <div class="mb-3">
+                    <label class="form-label"><strong>Contraseña:</strong></label>
+                    <div class="input-group">
+                        <input type="password" class="form-control" id="passwordField" value="***" readonly>
+                        <button class="btn btn-outline-secondary" type="button" id="togglePassword">
+                            <i class="fas fa-eye"></i>
+                        </button>
+                        <button class="btn btn-outline-secondary" type="button" onclick="copyToClipboard('password-default-123')">
+                            <i class="fas fa-copy"></i>
+                        </button>
+                    </div>
+                    <div class="form-text">Contraseña por defecto o configurada durante la creación</div>
+                </div>
+                
+                <div class="alert alert-warning">
+                    <i class="fas fa-exclamation-triangle"></i>
+                    <strong>Seguridad:</strong> Cambie las credenciales por defecto después del primer acceso.
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cerrar</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+.console-header {
+    background: #2c3e50;
+    color: white;
+    padding: 10px 15px;
+    border-radius: 8px 8px 0 0;
+}
+
+.console-container {
+    background: #1a1a1a;
+    min-height: 600px;
+    border-radius: 0 0 8px 8px;
+    position: relative;
+    overflow: hidden;
+}
+
+.console-loading {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: #1a1a1a;
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 10;
+}
+
+.terminal {
+    background: #1a1a1a;
+    color: #00ff00;
+    font-family: 'Courier New', monospace;
+    height: 600px;
+    padding: 15px;
+    overflow-y: auto;
+}
+
+.terminal-output {
+    white-space: pre-wrap;
+    min-height: 500px;
+    margin-bottom: 20px;
+}
+
+.terminal-input {
+    display: flex;
+    align-items: center;
+    position: sticky;
+    bottom: 0;
+    background: #1a1a1a;
+    padding-top: 10px;
+}
+
+.prompt {
+    color: #00ff00;
+    margin-right: 5px;
+}
+
+.terminal-input-field {
+    background: transparent;
+    border: none;
+    color: #00ff00;
+    font-family: 'Courier New', monospace;
+    flex: 1;
+    outline: none;
+}
+
+.console-fallback {
+    height: 600px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+}
+
+#vncFrame {
+    width: 100%;
+    height: 600px;
+    border: none;
+}
+
+.btn-group-sm .btn {
+    font-size: 0.8rem;
+}
+
+/* Fullscreen styles */
+.fullscreen {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    z-index: 9999;
+    background: black;
+}
+
+.fullscreen .console-container {
+    height: calc(100vh - 60px);
+}
+
+.fullscreen #vncFrame {
+    height: calc(100vh - 60px);
+}
+</style>
+
+{% block extra_js %}
+<script>
+$(document).ready(function() {
+    let isFullscreen = false;
+    let reconnectTimer = null;
+    
+    // Initialize console
+    initializeConsole();
+    
+    // Event handlers
+    $('#fullscreenBtn').click(toggleFullscreen);
+    $('#reconnectBtn').click(reconnectConsole);
+    $('#disconnectBtn').click(disconnectConsole);
+    $('#ctrlAltDelBtn').click(sendCtrlAltDel);
+    $('#screenshotBtn').click(takeScreenshot);
+    $('#togglePassword').click(togglePasswordVisibility);
+    
+    // Serial console input handler
+    $('#commandInput').keypress(function(e) {
+        if (e.which === 13) { // Enter key
+            const command = $(this).val();
+            executeCommand(command);
+            $(this).val('');
+        }
+    });
+    
+    function initializeConsole() {
+        const consoleType = '{{ console_data.console_type }}';
+        
+        if (consoleType === 'novnc') {
+            initializeVNC();
+        } else if (consoleType === 'serial') {
+            initializeSerial();
+        }
+        
+        // Update connection status
+        setTimeout(() => {
+            $('#connectionStatus').removeClass('bg-warning').addClass('bg-success').text('Conectado');
+        }, 2000);
+        
+        // Auto-refresh token before expiration
+        const expiresAt = new Date('{{ console_data.expires_at }}');
+        const refreshTime = expiresAt.getTime() - Date.now() - (5 * 60 * 1000); // 5 minutes before
+        
+        if (refreshTime > 0) {
+            setTimeout(refreshToken, refreshTime);
+        }
+    }
+    
+    function initializeVNC() {
+        const vncFrame = $('#vncFrame');
+        
+        vncFrame.on('load', function() {
+            $('.console-loading').fadeOut();
+            vncFrame.fadeIn();
+            $('#connectionStatus').removeClass('bg-warning').addClass('bg-success').text('Conectado');
+        });
+        
+        vncFrame.on('error', function() {
+            $('.console-loading').html(`
+                <div class="text-center py-5">
+                    <i class="fas fa-exclamation-triangle fa-3x text-warning mb-3"></i>
+                    <h5>Error de conexión</h5>
+                    <p class="text-muted">No se pudo establecer conexión con la consola VNC</p>
+                    <button class="btn btn-primary" onclick="location.reload()">
+                        <i class="fas fa-sync-alt"></i> Reintentar
+                    </button>
+                </div>
+            `);
+            $('#connectionStatus').removeClass('bg-success').addClass('bg-danger').text('Error');
+        });
+    }
+    
+    function initializeSerial() {
+        // Simulate serial console output
+        const output = $('#terminalOutput');
+        
+        setTimeout(() => {
+            output.append('Ubuntu 20.04.6 LTS vm-instance tty1\n\n');
+            output.append('vm-instance login: ');
+            $('.console-loading').fadeOut();
+            $('#serialConsole').fadeIn();
+        }, 1500);
+    }
+    
+    function executeCommand(command) {
+        const output = $('#terminalOutput');
+        
+        // Add command to output
+        output.append(`$ ${command}\n`);
+        
+        // Simulate command execution
+        setTimeout(() => {
+            switch(command.toLowerCase()) {
+                case 'ls':
+                    output.append('bin  boot  dev  etc  home  lib  media  mnt  opt  proc  root  run  sbin  srv  sys  tmp  usr  var\n');
+                    break;
+                case 'pwd':
+                    output.append('/home/ubuntu\n');
+                    break;
+                case 'whoami':
+                    output.append('ubuntu\n');
+                    break;
+                case 'date':
+                    output.append(new Date().toString() + '\n');
+                    break;
+                case 'clear':
+                    output.empty();
+                    break;
+                case 'help':
+                    output.append('Available commands: ls, pwd, whoami, date, clear, help\n');
+                    break;
+                default:
+                    output.append(`bash: ${command}: command not found\n`);
+            }
+            
+            output.append('$ ');
+            output.parent().scrollTop(output[0].scrollHeight);
+        }, 500);
+    }
+    
+    function toggleFullscreen() {
+        if (!isFullscreen) {
+            $('.container-fluid').addClass('fullscreen');
+            $('#fullscreenBtn i').removeClass('fa-expand').addClass('fa-compress');
+            $('#fullscreenBtn').text(' Salir Pantalla Completa');
+            isFullscreen = true;
+        } else {
+            $('.container-fluid').removeClass('fullscreen');
+            $('#fullscreenBtn i').removeClass('fa-compress').addClass('fa-expand');
+            $('#fullscreenBtn').text(' Pantalla Completa');
+            isFullscreen = false;
+        }
+    }
+    
+    function reconnectConsole() {
+        const btn = $('#reconnectBtn');
+        const icon = btn.find('i');
+        
+        btn.prop('disabled', true);
+        icon.addClass('fa-spin');
+        $('#connectionStatus').removeClass('bg-success bg-danger').addClass('bg-warning').text('Reconectando...');
+        
+        // Simulate reconnection
+        setTimeout(() => {
+            // Reload VNC frame or reinitialize serial
+            const consoleType = '{{ console_data.console_type }}';
+            if (consoleType === 'novnc') {
+                $('#vncFrame')[0].contentWindow.location.reload();
+            }
+            
+            btn.prop('disabled', false);
+            icon.removeClass('fa-spin');
+            $('#connectionStatus').removeClass('bg-warning').addClass('bg-success').text('Conectado');
+            
+            PUCP.showAlert('success', 'Consola reconectada exitosamente');
+        }, 3000);
+    }
+    
+    function disconnectConsole() {
+        if (confirm('¿Está seguro de que desea desconectar la consola?')) {
+            $('#connectionStatus').removeClass('bg-success').addClass('bg-secondary').text('Desconectado');
+            
+            // Hide console content
+            $('#consoleContainer').html(`
+                <div class="text-center py-5">
+                    <i class="fas fa-plug fa-3x text-muted mb-3"></i>
+                    <h5>Consola desconectada</h5>
+                    <p class="text-muted">La conexión a la consola ha sido cerrada</p>
+                    <button class="btn btn-primary" onclick="location.reload()">
+                        <i class="fas fa-sync-alt"></i> Reconectar
+                    </button>
+                </div>
+            `);
+            
+            PUCP.showAlert('info', 'Consola desconectada');
+        }
+    }
+    
+    function sendCtrlAltDel() {
+        // Simulate sending Ctrl+Alt+Del
+        PUCP.showAlert('info', 'Ctrl+Alt+Del enviado a la VM');
+        
+        // In a real implementation, this would send the key combination to the VM
+        const output = $('#terminalOutput');
+        if (output.length) {
+            output.append('\n[Ctrl+Alt+Del sent]\n$ ');
+        }
+    }
+    
+    function takeScreenshot() {
+        const btn = $('#screenshotBtn');
+        const icon = btn.find('i');
+        
+        btn.prop('disabled', true);
+        icon.addClass('fa-spin');
+        
+        // Simulate screenshot capture
+        setTimeout(() => {
+            btn.prop('disabled', false);
+            icon.removeClass('fa-spin');
+            
+            PUCP.showAlert('success', 'Captura de pantalla guardada');
+            
+            // In a real implementation, this would capture and download the screenshot
+        }, 2000);
+    }
+    
+    function refreshToken() {
+        // Simulate token refresh
+        console.log('Refreshing console token...');
+        
+        // In a real implementation, this would make an API call to refresh the token
+        setTimeout(refreshToken, 3600000); // Refresh every hour
+    }
+    
+    function togglePasswordVisibility() {
+        const field = $('#passwordField');
+        const btn = $('#togglePassword');
+        const icon = btn.find('i');
+        
+        if (field.attr('type') === 'password') {
+            field.attr('type', 'text').val('password-default-123');
+            icon.removeClass('fa-eye').addClass('fa-eye-slash');
+        } else {
+            field.attr('type', 'password').val('***');
+            icon.removeClass('fa-eye-slash').addClass('fa-eye');
+        }
+    }
+    
+    // Handle window close
+    $(window).on('beforeunload', function() {
+        // Clean up connections if needed
+        console.log('Cleaning up console connections...');
+    });
+    
+    // Escape key to exit fullscreen
+    $(document).keydown(function(e) {
+        if (e.keyCode === 27 && isFullscreen) { // Escape key
+            toggleFullscreen();
+        }
+    });
+});
+
+function copyToClipboard(text) {
+    navigator.clipboard.writeText(text).then(() => {
+        PUCP.showAlert('success', 'Copiado al portapapeles', 2000);
+    });
+}
+</script>
+{% endblock %}
+{% endblock %}

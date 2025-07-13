@@ -1,0 +1,351 @@
+{% extends "base.html" %}
+
+{% block title %}Mis Slices - PUCP Cloud Orchestrator{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row mb-4">
+        <div class="col">
+            <div class="d-flex justify-content-between align-items-center">
+                <div>
+                    <h1><i class="fas fa-network-wired"></i> Mis Slices</h1>
+                    <p class="text-muted">Gestiona todos tus slices de red desde aquí</p>
+                </div>
+                <div>
+                    <div class="dropdown">
+                        <button class="btn btn-primary dropdown-toggle" type="button" data-bs-toggle="dropdown">
+                            <i class="fas fa-plus"></i> Crear Nuevo Slice
+                        </button>
+                        <ul class="dropdown-menu">
+                            <li><a class="dropdown-item" href="{{ url_for('create_slice_form', topology='linear') }}">
+                                <i class="fas fa-minus"></i> Topología Lineal</a></li>
+                            <li><a class="dropdown-item" href="{{ url_for('create_slice_form', topology='mesh') }}">
+                                <i class="fas fa-project-diagram"></i> Topología Malla</a></li>
+                            <li><a class="dropdown-item" href="{{ url_for('create_slice_form', topology='tree') }}">
+                                <i class="fas fa-tree"></i> Topología Árbol</a></li>
+                            <li><a class="dropdown-item" href="{{ url_for('create_slice_form', topology='ring') }}">
+                                <i class="fas fa-circle"></i> Topología Anillo</a></li>
+                            <li><a class="dropdown-item" href="{{ url_for('create_slice_form', topology='bus') }}">
+                                <i class="fas fa-grip-lines"></i> Topología Bus</a></li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    {% if slices %}
+    <div class="row">
+        {% for slice in slices %}
+        <div class="col-md-6 col-lg-4 mb-4">
+            <div class="card h-100 slice-card" data-slice-id="{{ slice.id }}">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h6 class="mb-0">
+                        <i class="fas fa-network-wired"></i> {{ slice.name }}
+                    </h6>
+                    <span class="badge bg-{{ 'success' if slice.status == 'active' else 'warning' if slice.status == 'deploying' else 'danger' if slice.status == 'error' else 'secondary' }}">
+                        {{ slice.status.title() }}
+                    </span>
+                </div>
+                
+                <div class="card-body">
+                    <div class="mb-2">
+                        <strong>Infraestructura:</strong>
+                        <span class="badge bg-{{ 'primary' if slice.infrastructure == 'linux' else 'info' }}">
+                            <i class="fas fa-{{ 'server' if slice.infrastructure == 'linux' else 'cloud' }}"></i>
+                            {{ slice.infrastructure.title() }}
+                        </span>
+                    </div>
+                    
+                    {% if slice.description %}
+                    <p class="text-muted small">{{ slice.description[:100] }}{% if slice.description|length > 100 %}...{% endif %}</p>
+                    {% endif %}
+                    
+                    <div class="row text-center">
+                        <div class="col-4">
+                            <div class="metric">
+                                <div class="metric-value">{{ slice.node_count or 0 }}</div>
+                                <div class="metric-label">Nodos</div>
+                            </div>
+                        </div>
+                        <div class="col-4">
+                            <div class="metric">
+                                <div class="metric-value">{{ slice.total_vcpus or 0 }}</div>
+                                <div class="metric-label">vCPUs</div>
+                            </div>
+                        </div>
+                        <div class="col-4">
+                            <div class="metric">
+                                <div class="metric-value">{{ "%.1f"|format((slice.total_ram or 0) / 1024) }}</div>
+                                <div class="metric-label">GB RAM</div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="mt-3">
+                        <small class="text-muted">
+                            <i class="fas fa-calendar"></i> 
+                            Creado: {{ slice.created_at[:10] if slice.created_at else 'N/A' }}
+                        </small>
+                    </div>
+                </div>
+                
+                <div class="card-footer">
+                    <div class="btn-group w-100" role="group">
+                        <a href="{{ url_for('slice_detail', slice_id=slice.id) }}" 
+                           class="btn btn-outline-primary btn-sm">
+                            <i class="fas fa-eye"></i> Ver
+                        </a>
+                        
+                        {% if slice.status == 'draft' %}
+                        <button class="btn btn-outline-success btn-sm deploy-btn" 
+                                data-slice-id="{{ slice.id }}">
+                            <i class="fas fa-play"></i> Desplegar
+                        </button>
+                        {% endif %}
+                        
+                        {% if slice.status in ['draft', 'error'] %}
+                        <a href="{{ url_for('edit_slice_form', slice_id=slice.id) }}" 
+                           class="btn btn-outline-info btn-sm">
+                            <i class="fas fa-edit"></i> Editar
+                        </a>
+                        {% endif %}
+                        
+                        <button class="btn btn-outline-danger btn-sm delete-btn" 
+                                data-slice-id="{{ slice.id }}" 
+                                data-slice-name="{{ slice.name }}">
+                            <i class="fas fa-trash"></i> Eliminar
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    
+    {% else %}
+    <div class="row">
+        <div class="col">
+            <div class="card">
+                <div class="card-body text-center py-5">
+                    <i class="fas fa-network-wired fa-4x text-muted mb-3"></i>
+                    <h4>No tienes slices creados</h4>
+                    <p class="text-muted">Comienza creando tu primer slice con una topología predefinida</p>
+                    
+                    <div class="mt-4">
+                        <div class="dropdown">
+                            <button class="btn btn-primary dropdown-toggle" type="button" data-bs-toggle="dropdown">
+                                <i class="fas fa-plus"></i> Crear Mi Primer Slice
+                            </button>
+                            <ul class="dropdown-menu">
+                                <li><a class="dropdown-item" href="{{ url_for('create_slice_form', topology='linear') }}">
+                                    <i class="fas fa-minus"></i> Topología Lineal</a></li>
+                                <li><a class="dropdown-item" href="{{ url_for('create_slice_form', topology='mesh') }}">
+                                    <i class="fas fa-project-diagram"></i> Topología Malla</a></li>
+                                <li><a class="dropdown-item" href="{{ url_for('create_slice_form', topology='tree') }}">
+                                    <i class="fas fa-tree"></i> Topología Árbol</a></li>
+                                <li><a class="dropdown-item" href="{{ url_for('create_slice_form', topology='ring') }}">
+                                    <i class="fas fa-circle"></i> Topología Anillo</a></li>
+                                <li><a class="dropdown-item" href="{{ url_for('create_slice_form', topology='bus') }}">
+                                    <i class="fas fa-grip-lines"></i> Topología Bus</a></li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+</div>
+
+<!-- Modal de Confirmación para Eliminar -->
+<div class="modal fade" id="deleteConfirmModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Confirmar Eliminación</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p>¿Estás seguro de que deseas eliminar el slice <strong id="deleteSliceName"></strong>?</p>
+                <div class="alert alert-warning">
+                    <i class="fas fa-exclamation-triangle"></i>
+                    <strong>Advertencia:</strong> Esta acción no se puede deshacer. 
+                    Todas las VMs y recursos asociados serán eliminados permanentemente.
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                <button type="button" class="btn btn-danger" id="confirmDeleteBtn">
+                    <i class="fas fa-trash"></i> Eliminar Definitivamente
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal de Progreso -->
+<div class="modal fade" id="progressModal" tabindex="-1" data-bs-backdrop="static">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Procesando...</h5>
+            </div>
+            <div class="modal-body text-center">
+                <div class="spinner-border text-primary mb-3" role="status">
+                    <span class="visually-hidden">Cargando...</span>
+                </div>
+                <p id="progressMessage">Por favor espera...</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+.slice-card {
+    transition: transform 0.2s, box-shadow 0.2s;
+    border-radius: 10px;
+}
+
+.slice-card:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 8px 25px rgba(0,0,0,0.15);
+}
+
+.metric {
+    padding: 10px 5px;
+}
+
+.metric-value {
+    font-size: 1.5rem;
+    font-weight: bold;
+    color: #495057;
+}
+
+.metric-label {
+    font-size: 0.75rem;
+    color: #6c757d;
+    text-transform: uppercase;
+}
+
+.card-footer {
+    background-color: #f8f9fa;
+    border-top: 1px solid #dee2e6;
+}
+
+.btn-group .btn {
+    border-radius: 0;
+}
+
+.btn-group .btn:first-child {
+    border-radius: 0.375rem 0 0 0.375rem;
+}
+
+.btn-group .btn:last-child {
+    border-radius: 0 0.375rem 0.375rem 0;
+}
+</style>
+
+{% block extra_js %}
+<script>
+$(document).ready(function() {
+    let selectedSliceId = null;
+    
+    // Manejar click en botón eliminar
+    $('.delete-btn').click(function() {
+        selectedSliceId = $(this).data('slice-id');
+        const sliceName = $(this).data('slice-name');
+        $('#deleteSliceName').text(sliceName);
+        $('#deleteConfirmModal').modal('show');
+    });
+    
+    // Confirmar eliminación
+    $('#confirmDeleteBtn').click(function() {
+        if (selectedSliceId) {
+            deleteSlice(selectedSliceId);
+        }
+    });
+    
+    // Manejar click en botón desplegar
+    $('.deploy-btn').click(function() {
+        const sliceId = $(this).data('slice-id');
+        deploySlice(sliceId);
+    });
+    
+    function deploySlice(sliceId) {
+        $('#progressMessage').text('Desplegando slice...');
+        $('#progressModal').modal('show');
+        
+        $.ajax({
+            url: `/slice/${sliceId}/deploy`,
+            method: 'POST',
+            success: function(response) {
+                $('#progressModal').modal('hide');
+                if (response.success) {
+                    showAlert('success', 'Slice desplegado exitosamente');
+                    setTimeout(() => location.reload(), 1000);
+                } else {
+                    showAlert('error', response.error || 'Error al desplegar slice');
+                }
+            },
+            error: function(xhr) {
+                $('#progressModal').modal('hide');
+                const error = xhr.responseJSON?.error || 'Error de conexión';
+                showAlert('error', error);
+            }
+        });
+    }
+    
+    function deleteSlice(sliceId) {
+        $('#deleteConfirmModal').modal('hide');
+        $('#progressMessage').text('Eliminando slice...');
+        $('#progressModal').modal('show');
+        
+        $.ajax({
+            url: `/slice/${sliceId}/delete`,
+            method: 'POST',
+            success: function(response) {
+                $('#progressModal').modal('hide');
+                if (response.success) {
+                    showAlert('success', 'Slice eliminado exitosamente');
+                    $(`.slice-card[data-slice-id="${sliceId}"]`).fadeOut(500, function() {
+                        $(this).remove();
+                        // Si no quedan slices, recargar la página para mostrar el mensaje
+                        if ($('.slice-card').length === 0) {
+                            location.reload();
+                        }
+                    });
+                } else {
+                    showAlert('error', response.error || 'Error al eliminar slice');
+                }
+            },
+            error: function(xhr) {
+                $('#progressModal').modal('hide');
+                const error = xhr.responseJSON?.error || 'Error de conexión';
+                showAlert('error', error);
+            }
+        });
+    }
+    
+    function showAlert(type, message) {
+        const alertClass = type === 'error' ? 'alert-danger' : 'alert-success';
+        const icon = type === 'error' ? 'fa-exclamation-triangle' : 'fa-check-circle';
+        
+        const alert = $(`
+            <div class="alert ${alertClass} alert-dismissible fade show" role="alert">
+                <i class="fas ${icon}"></i> ${message}
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            </div>
+        `);
+        
+        $('.container-fluid').prepend(alert);
+        
+        // Auto-dismiss after 5 seconds
+        setTimeout(() => {
+            alert.alert('close');
+        }, 5000);
+    }
+});
+</script>
+{% endblock %}
+{% endblock %}

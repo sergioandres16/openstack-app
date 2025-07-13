@@ -1,0 +1,23 @@
+Flask==2.3.3
+Flask-CORS==4.0.0
+PyJWT==2.8.0
+python-dotenv==1.0.0
+Werkzeug==2.3.7
+requests==2.31.0
+
+# OpenStack clients
+keystoneauth1==5.2.0
+python-novaclient==18.3.0
+python-neutronclient==9.0.0
+python-glanceclient==4.3.0
+python-cinderclient==9.3.0
+
+# Database and utilities
+sqlite3
+uuid
+ipaddress
+datetime
+typing
+
+# Logging and monitoring
+structlog==23.1.0
