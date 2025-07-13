@@ -256,12 +256,41 @@ def create_openstack_project_for_user(username, user_id):
                 openstack_user_info = user_response.json()
                 openstack_user_id = openstack_user_info['user']['id']
                 
-                # Asignar rol de miembro al usuario en el proyecto
-                role_assignment = requests.put(
-                    f"{admin_credentials['auth_url']}/projects/{project_id}/users/{openstack_user_id}/roles/member",
+                # Primero obtener el ID del rol de admin
+                roles_response = requests.get(
+                    f"{admin_credentials['auth_url']}/roles?name=admin",
                     headers=headers,
                     timeout=30
                 )
+                
+                admin_role_id = None
+                if roles_response.status_code == 200:
+                    roles_data = roles_response.json()
+                    if roles_data['roles']:
+                        admin_role_id = roles_data['roles'][0]['id']
+                
+                # Si no existe rol admin, usar member como fallback
+                if not admin_role_id:
+                    member_roles_response = requests.get(
+                        f"{admin_credentials['auth_url']}/roles?name=member",
+                        headers=headers,
+                        timeout=30
+                    )
+                    if member_roles_response.status_code == 200:
+                        member_roles_data = member_roles_response.json()
+                        if member_roles_data['roles']:
+                            admin_role_id = member_roles_data['roles'][0]['id']
+                
+                # Asignar rol de admin al usuario en el proyecto
+                if admin_role_id:
+                    role_assignment = requests.put(
+                        f"{admin_credentials['auth_url']}/projects/{project_id}/users/{openstack_user_id}/roles/{admin_role_id}",
+                        headers=headers,
+                        timeout=30
+                    )
+                    logger.info(f"Assigned admin role to user {username} in project {project_name}")
+                else:
+                    logger.error("Could not find admin or member role in OpenStack")
                 
                 # Guardar credenciales de OpenStack del usuario en la base de datos
                 db = get_db()
@@ -812,21 +841,291 @@ def create_slice_form():
 @app.route('/slice/create', methods=['POST'])
 @login_required
 def create_slice():
-    """Crear nuevo slice"""
+    """Crear nuevo slice con integración real de OpenStack"""
     try:
         data = request.get_json()
         
-        response = make_api_request('POST', '/slices', data)
+        if not data or not data.get('name'):
+            return jsonify({'success': False, 'error': 'Nombre del slice es requerido'}), 400
         
-        if response and response.status_code == 201:
-            return jsonify({'success': True, 'data': response.json()})
-        else:
-            error_msg = response.json().get('error', 'Error desconocido') if response else 'Error de conexión'
-            return jsonify({'success': False, 'error': error_msg}), 400
+        # Generar ID único para el slice
+        slice_id = str(uuid.uuid4())
+        
+        # Obtener credenciales del usuario
+        credentials = get_user_openstack_credentials()
+        if not credentials:
+            return jsonify({'success': False, 'error': 'Configure las credenciales de OpenStack primero'}), 400
+        
+        # Crear el slice en la base de datos local
+        db = get_db()
+        
+        # Guardar configuración del slice
+        slice_config = {
+            'topology_type': data.get('topology_type', 'linear'),
+            'infrastructure': data.get('infrastructure', 'openstack'),
+            'nodes': data.get('nodes', []),
+            'networks': data.get('networks', [])
+        }
+        
+        db.execute('''
+            INSERT INTO slices (id, user_id, name, description, topology_type, status, config_data)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            slice_id,
+            session['user']['id'],
+            data['name'],
+            data.get('description', ''),
+            data.get('topology_type', 'linear'),
+            'draft',
+            json.dumps(slice_config)
+        ))
+        db.commit()
+        
+        # Si el usuario eligió infraestructura OpenStack, crear recursos reales
+        if data.get('infrastructure') == 'openstack':
+            success = create_openstack_resources(slice_id, slice_config, credentials)
+            if success:
+                # Actualizar estado del slice
+                db.execute('UPDATE slices SET status = ? WHERE id = ?', ('created', slice_id))
+                db.commit()
+                logger.info(f"Slice {slice_id} created successfully with OpenStack resources")
+            else:
+                logger.warning(f"Slice {slice_id} created but OpenStack deployment failed")
+        
+        return jsonify({
+            'success': True, 
+            'slice_id': slice_id,
+            'message': 'Slice creado exitosamente'
+        })
             
     except Exception as e:
         logger.error(f"Error creating slice: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
+
+def create_openstack_resources(slice_id, config, credentials):
+    """Crea recursos reales en OpenStack para el slice"""
+    try:
+        # Obtener token de autenticación
+        auth_data = {
+            "auth": {
+                "identity": {
+                    "methods": ["password"],
+                    "password": {
+                        "user": {
+                            "name": credentials['username'],
+                            "domain": {"name": credentials['user_domain_name']},
+                            "password": credentials['password']
+                        }
+                    }
+                },
+                "scope": {
+                    "project": {
+                        "name": credentials['project_name'],
+                        "domain": {"name": credentials['project_domain_name']}
+                    }
+                }
+            }
+        }
+        
+        response = requests.post(
+            f"{credentials['auth_url']}/auth/tokens",
+            json=auth_data,
+            headers={'Content-Type': 'application/json'},
+            timeout=30
+        )
+        
+        if response.status_code != 201:
+            logger.error(f"Failed to authenticate with OpenStack: {response.status_code}")
+            return False
+        
+        token = response.headers.get('X-Subject-Token')
+        headers = {
+            'X-Auth-Token': token,
+            'Content-Type': 'application/json'
+        }
+        
+        # Crear redes primero
+        for network_config in config.get('networks', []):
+            create_network_in_openstack(network_config, headers, credentials, slice_id)
+        
+        # Crear instancias/nodos
+        for node_config in config.get('nodes', []):
+            create_instance_in_openstack(node_config, headers, credentials, slice_id)
+        
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error creating OpenStack resources: {e}")
+        return False
+
+def create_network_in_openstack(network_config, headers, credentials, slice_id):
+    """Crea una red en OpenStack"""
+    try:
+        network_data = {
+            "network": {
+                "name": f"{slice_id}-{network_config['name']}",
+                "admin_state_up": True,
+                "description": f"Red para slice {slice_id}"
+            }
+        }
+        
+        # Crear red (usar puerto 15002 para Neutron según configuración SSH)
+        network_response = requests.post(
+            f"http://localhost:15002/v2.0/networks",
+            json=network_data,
+            headers=headers,
+            timeout=30
+        )
+        
+        if network_response.status_code == 201:
+            network_info = network_response.json()
+            network_id = network_info['network']['id']
+            
+            # Crear subnet
+            subnet_data = {
+                "subnet": {
+                    "name": f"{slice_id}-{network_config['name']}-subnet",
+                    "network_id": network_id,
+                    "ip_version": 4,
+                    "cidr": network_config.get('cidr', '192.168.100.0/24'),
+                    "enable_dhcp": True
+                }
+            }
+            
+            if network_config.get('gateway'):
+                subnet_data['subnet']['gateway_ip'] = network_config['gateway']
+            
+            subnet_response = requests.post(
+                f"http://localhost:15002/v2.0/subnets",
+                json=subnet_data,
+                headers=headers,
+                timeout=30
+            )
+            
+            if subnet_response.status_code == 201:
+                logger.info(f"Created network {network_config['name']} for slice {slice_id}")
+                return True
+            else:
+                logger.error(f"Failed to create subnet: {subnet_response.status_code}")
+        else:
+            logger.error(f"Failed to create network: {network_response.status_code}")
+        
+        return False
+        
+    except Exception as e:
+        logger.error(f"Error creating network in OpenStack: {e}")
+        return False
+
+def create_instance_in_openstack(node_config, headers, credentials, slice_id):
+    """Crea una instancia en OpenStack"""
+    try:
+        # Obtener imágenes disponibles (usar puerto 15003 para Glance)
+        images_response = requests.get(
+            f"http://localhost:15003/v2/images",
+            headers=headers,
+            timeout=30
+        )
+        
+        if images_response.status_code != 200:
+            logger.error("Failed to get images from OpenStack")
+            return False
+        
+        images = images_response.json().get('images', [])
+        
+        # Buscar imagen compatible
+        image_id = None
+        image_name = node_config.get('image', 'ubuntu')
+        for image in images:
+            if image.get('status') == 'active' and image_name.lower() in image.get('name', '').lower():
+                image_id = image['id']
+                break
+        
+        if not image_id and images:
+            # Usar primera imagen activa disponible
+            for image in images:
+                if image.get('status') == 'active':
+                    image_id = image['id']
+                    break
+        
+        if not image_id:
+            logger.error("No suitable image found in OpenStack")
+            return False
+        
+        # Obtener flavors (usar puerto 15001 para Nova)
+        flavors_response = requests.get(
+            f"http://localhost:15001/v2.1/flavors",
+            headers=headers,
+            timeout=30
+        )
+        
+        if flavors_response.status_code != 200:
+            logger.error("Failed to get flavors from OpenStack")
+            return False
+        
+        flavors = flavors_response.json().get('flavors', [])
+        
+        # Buscar flavor compatible
+        flavor_id = None
+        flavor_name = node_config.get('flavor', 'small')
+        
+        # Mapear nuestros flavors a flavors de OpenStack
+        flavor_mapping = {
+            'nano': ['m1.nano', 'nano'],
+            'micro': ['m1.micro', 'micro'],
+            'small': ['m1.small', 'small'],
+            'medium': ['m1.medium', 'medium'],
+            'large': ['m1.large', 'large']
+        }
+        
+        target_flavors = flavor_mapping.get(flavor_name, ['m1.small', 'small'])
+        
+        for target in target_flavors:
+            for flavor in flavors:
+                if target in flavor.get('name', '').lower():
+                    flavor_id = flavor['id']
+                    break
+            if flavor_id:
+                break
+        
+        if not flavor_id and flavors:
+            # Usar primer flavor disponible
+            flavor_id = flavors[0]['id']
+        
+        if not flavor_id:
+            logger.error("No suitable flavor found in OpenStack")
+            return False
+        
+        # Crear instancia
+        instance_data = {
+            "server": {
+                "name": f"{slice_id}-{node_config['name']}",
+                "imageRef": image_id,
+                "flavorRef": flavor_id,
+                "description": f"Nodo para slice {slice_id}",
+                "metadata": {
+                    "slice_id": slice_id,
+                    "node_type": node_config.get('name', 'node')
+                }
+            }
+        }
+        
+        instance_response = requests.post(
+            f"http://localhost:15001/v2.1/servers",
+            json=instance_data,
+            headers=headers,
+            timeout=30
+        )
+        
+        if instance_response.status_code == 202:
+            logger.info(f"Created instance {node_config['name']} for slice {slice_id}")
+            return True
+        else:
+            logger.error(f"Failed to create instance: {instance_response.status_code}")
+            return False
+        
+    except Exception as e:
+        logger.error(f"Error creating instance in OpenStack: {e}")
+        return False
 
 @app.route('/slice/<slice_id>')
 @login_required
@@ -876,13 +1175,148 @@ def deploy_slice(slice_id):
 @login_required
 def delete_slice(slice_id):
     """Eliminar slice"""
-    response = make_api_request('DELETE', f'/slices/{slice_id}')
-    
-    if response and response.status_code == 200:
+    try:
+        db = get_db()
+        
+        # Verificar que el slice pertenece al usuario
+        slice_data = db.execute(
+            'SELECT * FROM slices WHERE id = ? AND user_id = ?',
+            (slice_id, session['user']['id'])
+        ).fetchone()
+        
+        if not slice_data:
+            return jsonify({'success': False, 'error': 'Slice no encontrado'}), 404
+        
+        # Eliminar slice de la base de datos
+        db.execute('DELETE FROM slices WHERE id = ? AND user_id = ?', (slice_id, session['user']['id']))
+        db.commit()
+        
         return jsonify({'success': True, 'message': 'Slice eliminado exitosamente'})
-    else:
-        error_msg = response.json().get('error', 'Error al eliminar') if response else 'Error de conexión'
-        return jsonify({'success': False, 'error': error_msg}), 400
+        
+    except Exception as e:
+        logger.error(f"Error deleting slice: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/topology/generate', methods=['POST'])
+@login_required
+def generate_topology():
+    """Generar configuración automática de topología"""
+    try:
+        data = request.get_json()
+        topology_type = data.get('topology')
+        node_count = data.get('node_count', 3)
+        
+        if topology_type not in PREDEFINED_TOPOLOGIES:
+            return jsonify({'success': False, 'error': 'Tipo de topología no válido'}), 400
+        
+        topology_info = PREDEFINED_TOPOLOGIES[topology_type]
+        
+        # Validar número de nodos
+        if node_count < topology_info['min_nodes'] or node_count > topology_info['max_nodes']:
+            return jsonify({
+                'success': False, 
+                'error': f'Número de nodos debe estar entre {topology_info["min_nodes"]} y {topology_info["max_nodes"]}'
+            }), 400
+        
+        # Generar configuración de nodos
+        nodes = []
+        for i in range(node_count):
+            nodes.append({
+                'name': f'node-{i + 1}',
+                'image': 'ubuntu-20.04',
+                'flavor': 'small',
+                'internet_access': i == 0,  # Solo el primer nodo tiene acceso a internet por defecto
+                'management_ip': ''
+            })
+        
+        # Generar configuración de redes según topología
+        networks = []
+        
+        if topology_type == 'linear':
+            # Red principal para comunicación secuencial
+            networks.append({
+                'name': 'linear-network',
+                'cidr': '192.168.100.0/24',
+                'network_type': 'data',
+                'internet_access': True,
+                'gateway': '192.168.100.1'
+            })
+        
+        elif topology_type == 'mesh':
+            # Red principal donde todos se comunican
+            networks.append({
+                'name': 'mesh-network',
+                'cidr': '192.168.100.0/24',
+                'network_type': 'data',
+                'internet_access': True,
+                'gateway': '192.168.100.1'
+            })
+        
+        elif topology_type == 'tree':
+            # Red principal para el árbol
+            networks.append({
+                'name': 'tree-network',
+                'cidr': '192.168.100.0/24',
+                'network_type': 'data',
+                'internet_access': True,
+                'gateway': '192.168.100.1'
+            })
+            
+            # Red de gestión adicional
+            networks.append({
+                'name': 'management-network',
+                'cidr': '192.168.101.0/24',
+                'network_type': 'management',
+                'internet_access': False,
+                'gateway': '192.168.101.1'
+            })
+        
+        elif topology_type == 'ring':
+            # Red circular
+            networks.append({
+                'name': 'ring-network',
+                'cidr': '192.168.100.0/24',
+                'network_type': 'data',
+                'internet_access': True,
+                'gateway': '192.168.100.1'
+            })
+        
+        elif topology_type == 'bus':
+            # Red de bus principal
+            networks.append({
+                'name': 'bus-network',
+                'cidr': '192.168.100.0/24',
+                'network_type': 'data',
+                'internet_access': True,
+                'gateway': '192.168.100.1'
+            })
+        
+        # Agregar red de gestión común
+        if len(networks) == 1:
+            networks.append({
+                'name': 'management-network',
+                'cidr': '192.168.200.0/24',
+                'network_type': 'management',
+                'internet_access': False,
+                'gateway': '192.168.200.1'
+            })
+        
+        topology_config = {
+            'nodes': nodes,
+            'networks': networks,
+            'topology_type': topology_type,
+            'total_nodes': node_count
+        }
+        
+        return jsonify({
+            'success': True,
+            'topology': topology_config,
+            'message': f'Topología {topology_info["name"]} generada con {node_count} nodos'
+        })
+        
+    except Exception as e:
+        logger.error(f"Error generating topology: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/images')
 @login_required

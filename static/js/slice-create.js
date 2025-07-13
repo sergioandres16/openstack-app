@@ -431,6 +431,7 @@ function submitSlice(e) {
         name: $('#sliceName').val(),
         description: $('#description').val(),
         infrastructure: $('#infrastructure').val(),
+        topology_type: $('#topologyType').val(),
         nodes: sliceData.nodes,
         networks: sliceData.networks
     };

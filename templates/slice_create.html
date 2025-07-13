@@ -307,6 +307,21 @@
 }
 </style>
 
+<!-- Modal de progreso -->
+<div class="modal fade" id="progressModal" tabindex="-1" data-bs-backdrop="static" data-bs-keyboard="false">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-body text-center">
+                <div class="spinner-border text-primary mb-3" role="status">
+                    <span class="visually-hidden">Cargando...</span>
+                </div>
+                <h5 id="progressMessage">Procesando...</h5>
+                <p class="text-muted">Por favor espere mientras se completa la operación.</p>
+            </div>
+        </div>
+    </div>
+</div>
+
 {% block extra_js %}
 <script src="{{ url_for('static', filename='js/slice-create.js') }}"></script>
 {% endblock %}
