@@ -391,22 +391,26 @@ def get_user_openstack_credentials():
     if 'user' not in session:
         return None
     
-    db = get_db()
-    credentials = db.execute(
-        'SELECT * FROM openstack_credentials WHERE user_id = ? AND is_active = 1',
-        (session['user']['id'],)
-    ).fetchone()
+    try:
+        db = get_db()
+        credentials = db.execute(
+            'SELECT * FROM openstack_credentials WHERE user_id = ? AND is_active = 1',
+            (session['user']['id'],)
+        ).fetchone()
+        
+        if credentials:
+            return {
+                'auth_url': credentials['auth_url'],
+                'username': credentials['username'],
+                'password': credentials['password'],
+                'project_name': credentials['project_name'],
+                'user_domain_name': credentials['user_domain_name'],
+                'project_domain_name': credentials['project_domain_name'],
+                'region_name': credentials['region_name']
+            }
+    except Exception as e:
+        logger.error(f"Error getting OpenStack credentials: {e}")
     
-    if credentials:
-        return {
-            'auth_url': credentials['auth_url'],
-            'username': credentials['username'],
-            'password': credentials['password'],
-            'project_name': credentials['project_name'],
-            'user_domain_name': credentials['user_domain_name'],
-            'project_domain_name': credentials['project_domain_name'],
-            'region_name': credentials['region_name']
-        }
     return None
 
 def get_openstack_token():
@@ -513,61 +517,71 @@ def make_openstack_request(method, service, endpoint, data=None):
 
 def fetch_openstack_data_with_cache(endpoint, cache_key, cache_ttl=30):
     """Obtiene datos de OpenStack con cache"""
-    # Intentar obtener del cache primero
-    cached_data = get_cached_data(cache_key, cache_ttl)
-    if cached_data:
-        logger.info(f"Using cached data for {cache_key}")
-        return cached_data
+    try:
+        # Intentar obtener del cache primero
+        cached_data = get_cached_data(cache_key, cache_ttl)
+        if cached_data:
+            logger.info(f"Using cached data for {cache_key}")
+            return cached_data
+        
+        # Si no hay cache, obtener de OpenStack
+        logger.info(f"Fetching fresh data from OpenStack for {cache_key}")
+        
+        if endpoint == '/images':
+            response = make_openstack_request('GET', 'image', '/images')
+            if response and response.status_code == 200:
+                data = response.json().get('images', [])
+                if isinstance(data, list):
+                    set_cached_data(cache_key, data, cache_ttl)
+                    return data
+                
+        elif endpoint == '/flavors':
+            response = make_openstack_request('GET', 'compute', '/flavors/detail')
+            if response and response.status_code == 200:
+                data = response.json().get('flavors', [])
+                if isinstance(data, list):
+                    set_cached_data(cache_key, data, cache_ttl)
+                    return data
+                
+        elif endpoint == '/quotas':
+            response = make_openstack_request('GET', 'compute', '/limits')
+            if response and response.status_code == 200:
+                limits = response.json().get('limits', {}).get('absolute', {})
+                data = {
+                    'total_vcpus': limits.get('maxTotalCores', 0),
+                    'used_vcpus': limits.get('totalCoresUsed', 0),
+                    'total_ram': limits.get('maxTotalRAMSize', 0),
+                    'used_ram': limits.get('totalRAMUsed', 0),
+                    'total_instances': limits.get('maxTotalInstances', 0),
+                    'used_instances': limits.get('totalInstancesUsed', 0)
+                }
+                set_cached_data(cache_key, data, cache_ttl)
+                return data
+                
+        elif endpoint == '/servers':
+            response = make_openstack_request('GET', 'compute', '/servers/detail')
+            if response and response.status_code == 200:
+                data = response.json().get('servers', [])
+                if isinstance(data, list):
+                    set_cached_data(cache_key, data, cache_ttl)
+                    return data
+                
+        elif endpoint == '/networks':
+            response = make_openstack_request('GET', 'network', '/networks')
+            if response and response.status_code == 200:
+                data = response.json().get('networks', [])
+                if isinstance(data, list):
+                    set_cached_data(cache_key, data, cache_ttl)
+                    return data
+        
+    except Exception as e:
+        logger.error(f"Error fetching OpenStack data for {endpoint}: {e}")
     
-    # Si no hay cache, obtener de OpenStack
-    logger.info(f"Fetching fresh data from OpenStack for {cache_key}")
-    
-    if endpoint == '/images':
-        response = make_openstack_request('GET', 'image', '/images')
-        if response and response.status_code == 200:
-            data = response.json().get('images', [])
-            set_cached_data(cache_key, data, cache_ttl)
-            return data
-            
-    elif endpoint == '/flavors':
-        response = make_openstack_request('GET', 'compute', '/flavors/detail')
-        if response and response.status_code == 200:
-            data = response.json().get('flavors', [])
-            set_cached_data(cache_key, data, cache_ttl)
-            return data
-            
-    elif endpoint == '/quotas':
-        response = make_openstack_request('GET', 'compute', '/limits')
-        if response and response.status_code == 200:
-            limits = response.json().get('limits', {}).get('absolute', {})
-            data = {
-                'total_vcpus': limits.get('maxTotalCores', 0),
-                'used_vcpus': limits.get('totalCoresUsed', 0),
-                'total_ram': limits.get('maxTotalRAMSize', 0),
-                'used_ram': limits.get('totalRAMUsed', 0),
-                'total_instances': limits.get('maxTotalInstances', 0),
-                'used_instances': limits.get('totalInstancesUsed', 0)
-            }
-            set_cached_data(cache_key, data, cache_ttl)
-            return data
-            
-    elif endpoint == '/servers':
-        response = make_openstack_request('GET', 'compute', '/servers/detail')
-        if response and response.status_code == 200:
-            data = response.json().get('servers', [])
-            set_cached_data(cache_key, data, cache_ttl)
-            return data
-            
-    elif endpoint == '/networks':
-        response = make_openstack_request('GET', 'network', '/networks')
-        if response and response.status_code == 200:
-            data = response.json().get('networks', [])
-            set_cached_data(cache_key, data, cache_ttl)
-            return data
-    
-    # Si no se pudo obtener datos reales, devolver lista vacía
-    logger.warning(f"Could not fetch OpenStack data for {endpoint}")
-    return []
+    # Si no se pudo obtener datos reales, devolver estructura apropiada
+    if endpoint == '/quotas':
+        return {'total_vcpus': 0, 'used_vcpus': 0, 'total_ram': 0, 'used_ram': 0, 'total_instances': 0, 'used_instances': 0}
+    else:
+        return []
 
 def make_api_request(method, endpoint, data=None, params=None):
     """Maneja requests a APIs internas y OpenStack con cache"""
@@ -745,20 +759,25 @@ def dashboard():
         'total_disk': 0
     }
     
-    # Obtener VMs reales del proyecto del usuario en OpenStack
-    servers = fetch_openstack_data_with_cache('/servers', 'user_servers', 5)
-    if servers:
-        user_stats['total_vms'] = len(servers)
-        user_stats['total_vcpus'] = sum(s.get('vcpus', 0) for s in servers)
-        user_stats['total_ram'] = sum(s.get('ram', 0) for s in servers)
-        user_stats['total_disk'] = sum(s.get('disk', 0) for s in servers)
+    # Obtener VMs reales del proyecto del usuario en OpenStack (solo si tiene credenciales)
+    if get_user_openstack_credentials():
+        servers = fetch_openstack_data_with_cache('/servers', 'user_servers', 5)
+        if servers and isinstance(servers, list):
+            user_stats['total_vms'] = len(servers)
+            # Los servidores de OpenStack tienen diferentes campos según la API
+            user_stats['total_vcpus'] = sum(s.get('vcpus', s.get('flavor', {}).get('vcpus', 0)) if isinstance(s, dict) else 0 for s in servers)
+            user_stats['total_ram'] = sum(s.get('ram', s.get('flavor', {}).get('ram', 0)) if isinstance(s, dict) else 0 for s in servers)
+            user_stats['total_disk'] = sum(s.get('disk', s.get('flavor', {}).get('disk', 0)) if isinstance(s, dict) else 0 for s in servers)
     
     # Obtener recursos del sistema
     system_resources = get_system_resources()
     
-    # Obtener imágenes y flavors disponibles para el dashboard
-    images = fetch_openstack_data_with_cache('/images', 'images', 60)
-    flavors = fetch_openstack_data_with_cache('/flavors', 'flavors', 60)
+    # Obtener imágenes y flavors disponibles para el dashboard (solo si tiene credenciales)
+    images = []
+    flavors = []
+    if get_user_openstack_credentials():
+        images = fetch_openstack_data_with_cache('/images', 'images', 60)
+        flavors = fetch_openstack_data_with_cache('/flavors', 'flavors', 60)
     
     return render_template('dashboard.html', 
                          user=session['user'],
@@ -1180,9 +1199,23 @@ def get_openstack_resources():
     servers = fetch_openstack_data_with_cache('/servers', 'servers', 5)
     
     # Calcular estadísticas de uso real
-    used_vcpus = sum(server.get('vcpus', 0) for server in servers if server.get('status') == 'ACTIVE')
-    used_ram = sum(server.get('ram', 0) for server in servers if server.get('status') == 'ACTIVE')
-    used_instances = len([s for s in servers if s.get('status') == 'ACTIVE'])
+    used_vcpus = 0
+    used_ram = 0
+    used_instances = 0
+    
+    if isinstance(servers, list):
+        for server in servers:
+            if isinstance(server, dict) and server.get('status') == 'ACTIVE':
+                used_instances += 1
+                # Intentar obtener vcpus de diferentes campos posibles
+                vcpus = server.get('vcpus', 0) or server.get('flavor', {}).get('vcpus', 0)
+                ram = server.get('ram', 0) or server.get('flavor', {}).get('ram', 0)
+                used_vcpus += vcpus if isinstance(vcpus, int) else 0
+                used_ram += ram if isinstance(ram, int) else 0
+    
+    # Asegurar que quotas sea un diccionario
+    if not isinstance(quotas, dict):
+        quotas = {'total_vcpus': 0, 'used_vcpus': 0, 'total_ram': 0, 'used_ram': 0, 'total_instances': 0, 'used_instances': 0}
     
     return {
         'total_vcpus': quotas.get('total_vcpus', 0),
@@ -1191,7 +1224,7 @@ def get_openstack_resources():
         'used_ram': used_ram,
         'total_instances': quotas.get('total_instances', 0),
         'used_instances': used_instances,
-        'servers': servers,
+        'servers': servers if isinstance(servers, list) else [],
         'last_updated': datetime.utcnow().isoformat()
     }
 
