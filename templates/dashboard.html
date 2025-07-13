@@ -6,21 +6,21 @@
 <div class="container-fluid">
     <!-- Header -->
     <div class="row mb-4">
-        <div class="col">
-            <h1><i class="fas fa-tachometer-alt"></i> Dashboard</h1>
-            <p class="text-muted">Bienvenido, {{ user.username }}! Gestiona tus slices y recursos desde aquí.</p>
+        <div class="col-12">
+            <h2><i class="fas fa-tachometer-alt"></i> Dashboard</h2>
+            <p class="text-muted">Bienvenido, {{ user.username }}! Gestiona tus slices y recursos OpenStack.</p>
         </div>
     </div>
 
-    <!-- Estadísticas del Usuario -->
+    <!-- User Stats Cards -->
     <div class="row mb-4">
         <div class="col-md-3">
             <div class="card bg-primary text-white">
                 <div class="card-body">
                     <div class="d-flex justify-content-between">
                         <div>
-                            <h5 class="card-title">Total Slices</h5>
-                            <h2>{{ user_stats.total_slices }}</h2>
+                            <h4>{{ user_stats.total_slices }}</h4>
+                            <p class="mb-0">Total Slices</p>
                         </div>
                         <div class="align-self-center">
                             <i class="fas fa-network-wired fa-2x"></i>
@@ -35,11 +35,11 @@
                 <div class="card-body">
                     <div class="d-flex justify-content-between">
                         <div>
-                            <h5 class="card-title">Slices Activos</h5>
-                            <h2>{{ user_stats.active_slices }}</h2>
+                            <h4>{{ user_stats.active_slices }}</h4>
+                            <p class="mb-0">Slices Activos</p>
                         </div>
                         <div class="align-self-center">
-                            <i class="fas fa-play-circle fa-2x"></i>
+                            <i class="fas fa-check-circle fa-2x"></i>
                         </div>
                     </div>
                 </div>
@@ -51,11 +51,11 @@
                 <div class="card-body">
                     <div class="d-flex justify-content-between">
                         <div>
-                            <h5 class="card-title">vCPUs Usados</h5>
-                            <h2>{{ user_stats.total_vcpus }}</h2>
+                            <h4>{{ user_stats.total_vms }}</h4>
+                            <p class="mb-0">VMs Totales</p>
                         </div>
                         <div class="align-self-center">
-                            <i class="fas fa-microchip fa-2x"></i>
+                            <i class="fas fa-server fa-2x"></i>
                         </div>
                     </div>
                 </div>
@@ -67,11 +67,11 @@
                 <div class="card-body">
                     <div class="d-flex justify-content-between">
                         <div>
-                            <h5 class="card-title">RAM Total (GB)</h5>
-                            <h2>{{ "%.1f"|format(user_stats.total_ram / 1024) }}</h2>
+                            <h4>{{ user_stats.total_vcpus }}</h4>
+                            <p class="mb-0">vCPUs Usadas</p>
                         </div>
                         <div class="align-self-center">
-                            <i class="fas fa-memory fa-2x"></i>
+                            <i class="fas fa-microchip fa-2x"></i>
                         </div>
                     </div>
                 </div>
@@ -79,136 +79,129 @@
         </div>
     </div>
 
-    <!-- Acciones Rápidas -->
+    <!-- System Resources -->
+    {% if system_resources and system_resources.openstack %}
+    {% set openstack = system_resources.openstack %}
     <div class="row mb-4">
-        <div class="col">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header">
+                    <h5><i class="fas fa-cloud"></i> Recursos OpenStack</h5>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <!-- vCPUs -->
+                        <div class="col-md-4 mb-3">
+                            <div class="d-flex justify-content-between mb-1">
+                                <span>vCPUs</span>
+                                <span>{{ openstack.used_vcpus|default(0) }}/{{ openstack.total_vcpus|default(0) }}</span>
+                            </div>
+                            <div class="progress">
+                                <div class="progress-bar bg-primary" style="width: {{ openstack.used_vcpus|percentage(openstack.total_vcpus) }}%"></div>
+                            </div>
+                        </div>
+                        
+                        <!-- RAM -->
+                        <div class="col-md-4 mb-3">
+                            <div class="d-flex justify-content-between mb-1">
+                                <span>RAM (GB)</span>
+                                <span>{{ (openstack.used_ram|default(0) / 1024)|round(1) }}/{{ (openstack.total_ram|default(0) / 1024)|round(1) }}</span>
+                            </div>
+                            <div class="progress">
+                                <div class="progress-bar bg-success" style="width: {{ openstack.used_ram|percentage(openstack.total_ram) }}%"></div>
+                            </div>
+                        </div>
+                        
+                        <!-- Instances -->
+                        <div class="col-md-4 mb-3">
+                            <div class="d-flex justify-content-between mb-1">
+                                <span>Instancias</span>
+                                <span>{{ openstack.used_instances|default(0) }}/{{ openstack.total_instances|default(0) }}</span>
+                            </div>
+                            <div class="progress">
+                                <div class="progress-bar bg-info" style="width: {{ openstack.used_instances|percentage(openstack.total_instances) }}%"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Quick Actions -->
+    <div class="row mb-4">
+        <div class="col-12">
             <div class="card">
                 <div class="card-header">
                     <h5><i class="fas fa-bolt"></i> Acciones Rápidas</h5>
                 </div>
                 <div class="card-body">
                     <div class="row">
-                        <div class="col-md-6 mb-3">
-                            <h6><i class="fas fa-plus"></i> Crear Slice con Topología Predefinida</h6>
-                            <div class="row">
-                                {% for topology_id, topology in topologies.items() %}
-                                <div class="col-6 mb-2">
-                                    <a href="{{ url_for('create_slice_form', topology=topology_id) }}" 
-                                       class="btn btn-outline-primary btn-sm w-100">
-                                        <div class="topology-icon">{{ topology.icon }}</div>
-                                        {{ topology.name }}
+                        {% for topology_key, topology in topologies.items() %}
+                        <div class="col-md-4 mb-3">
+                            <div class="card border">
+                                <div class="card-body text-center">
+                                    <div class="topology-icon mb-2">{{ topology.icon }}</div>
+                                    <h6>{{ topology.name }}</h6>
+                                    <p class="text-muted small">{{ topology.description }}</p>
+                                    <a href="{{ url_for('create_slice_form', topology=topology_key) }}" class="btn btn-primary btn-sm">
+                                        <i class="fas fa-plus"></i> Crear
                                     </a>
                                 </div>
-                                {% endfor %}
                             </div>
                         </div>
-                        
-                        <div class="col-md-6">
-                            <h6><i class="fas fa-list"></i> Gestión</h6>
-                            <div class="d-grid gap-2">
-                                <a href="{{ url_for('list_slices') }}" class="btn btn-outline-success">
-                                    <i class="fas fa-network-wired"></i> Ver Mis Slices
-                                </a>
-                                <a href="{{ url_for('list_images') }}" class="btn btn-outline-info">
-                                    <i class="fas fa-compact-disc"></i> Gestionar Imágenes
-                                </a>
-                                <a href="{{ url_for('system_resources') }}" class="btn btn-outline-warning">
-                                    <i class="fas fa-chart-bar"></i> Monitorear Recursos
-                                </a>
-                            </div>
-                        </div>
+                        {% endfor %}
                     </div>
                 </div>
             </div>
         </div>
     </div>
 
-    <!-- Recursos del Sistema -->
-    <div class="row">
+    <!-- Recent Images -->
+    {% if recent_images %}
+    <div class="row mb-4">
         <div class="col-md-6">
             <div class="card">
                 <div class="card-header">
-                    <h5><i class="fas fa-server"></i> Cluster Linux</h5>
+                    <h5><i class="fas fa-compact-disc"></i> Imágenes Disponibles</h5>
                 </div>
                 <div class="card-body">
-                    {% set linux = system_resources.linux %}
-                    <div class="mb-3">
-                        <label class="form-label">vCPUs: {{ linux.used_vcpus }} / {{ linux.total_vcpus }}</label>
-                        <div class="progress">
-                            <div class="progress-bar" style="width: {{ (linux.used_vcpus / linux.total_vcpus * 100)|round }}%"></div>
-                        </div>
-                    </div>
-                    
-                    <div class="mb-3">
-                        <label class="form-label">RAM: {{ "%.1f"|format(linux.used_ram / 1024) }}GB / {{ "%.1f"|format(linux.total_ram / 1024) }}GB</label>
-                        <div class="progress">
-                            <div class="progress-bar bg-success" style="width: {{ (linux.used_ram / linux.total_ram * 100)|round }}%"></div>
-                        </div>
-                    </div>
-                    
-                    <div class="mb-3">
-                        <label class="form-label">Disco: {{ linux.used_disk }}GB / {{ linux.total_disk }}GB</label>
-                        <div class="progress">
-                            <div class="progress-bar bg-info" style="width: {{ (linux.used_disk / linux.total_disk * 100)|round }}%"></div>
-                        </div>
-                    </div>
-
-                    <h6>Servidores:</h6>
-                    <div class="row">
-                        {% for server in linux.servers %}
-                        <div class="col-6 mb-2">
-                            <div class="card card-body p-2">
-                                <small>
-                                    <strong>{{ server.name }}</strong><br>
-                                    <span class="badge bg-success">{{ server.status }}</span><br>
-                                    {{ server.vcpus }} vCPUs, {{ "%.1f"|format(server.ram / 1024) }}GB RAM
-                                </small>
+                    <div class="list-group list-group-flush">
+                        {% for image in recent_images %}
+                        <div class="list-group-item d-flex justify-content-between align-items-center">
+                            <div>
+                                <strong>{{ image.name|default('Unknown') }}</strong>
+                                <br><small class="text-muted">{{ image.status|default('Unknown') }}</small>
                             </div>
+                            <span class="badge bg-primary rounded-pill">{{ image.size|default(0)|filesizeformat }}</span>
                         </div>
                         {% endfor %}
+                    </div>
+                    <div class="mt-3">
+                        <a href="{{ url_for('list_images') }}" class="btn btn-outline-primary btn-sm">
+                            <i class="fas fa-list"></i> Ver Todas
+                        </a>
                     </div>
                 </div>
             </div>
         </div>
         
+        <!-- Available Flavors -->
         <div class="col-md-6">
             <div class="card">
                 <div class="card-header">
-                    <h5><i class="fas fa-cloud"></i> OpenStack</h5>
+                    <h5><i class="fas fa-cogs"></i> Flavors Disponibles</h5>
                 </div>
                 <div class="card-body">
-                    {% set openstack = system_resources.openstack %}
-                    <div class="mb-3">
-                        <label class="form-label">Instancias: {{ openstack.used_instances }} / {{ openstack.total_instances }}</label>
-                        <div class="progress">
-                            <div class="progress-bar bg-primary" style="width: {{ (openstack.used_instances / openstack.total_instances * 100)|round }}%"></div>
-                        </div>
-                    </div>
-                    
-                    <div class="mb-3">
-                        <label class="form-label">vCPUs: {{ openstack.used_vcpus }} / {{ openstack.total_vcpus }}</label>
-                        <div class="progress">
-                            <div class="progress-bar bg-warning" style="width: {{ (openstack.used_vcpus / openstack.total_vcpus * 100)|round }}%"></div>
-                        </div>
-                    </div>
-                    
-                    <div class="mb-3">
-                        <label class="form-label">RAM: {{ "%.1f"|format(openstack.used_ram / 1024) }}GB / {{ "%.1f"|format(openstack.total_ram / 1024) }}GB</label>
-                        <div class="progress">
-                            <div class="progress-bar bg-danger" style="width: {{ (openstack.used_ram / openstack.total_ram * 100)|round }}%"></div>
-                        </div>
-                    </div>
-
-                    <h6>Proyectos:</h6>
-                    <div class="row">
-                        {% for project in openstack.projects %}
-                        <div class="col-12 mb-2">
-                            <div class="card card-body p-2">
-                                <small>
-                                    <strong>{{ project.name }}</strong><br>
-                                    {{ project.instances }} instancias, {{ project.vcpus }} vCPUs
-                                </small>
+                    <div class="list-group list-group-flush">
+                        {% for flavor in available_flavors %}
+                        <div class="list-group-item">
+                            <div class="d-flex w-100 justify-content-between">
+                                <h6 class="mb-1">{{ flavor.name|default('Unknown') }}</h6>
+                                <small>{{ flavor.vcpus|default(0) }} vCPUs</small>
                             </div>
+                            <p class="mb-1">RAM: {{ flavor.ram|default(0) }} MB | Disk: {{ flavor.disk|default(0) }} GB</p>
                         </div>
                         {% endfor %}
                     </div>
@@ -216,25 +209,36 @@
             </div>
         </div>
     </div>
+    {% endif %}
+
+    <!-- No OpenStack Config Warning -->
+    {% if not recent_images and not available_flavors %}
+    <div class="row">
+        <div class="col-12">
+            <div class="alert alert-warning">
+                <h5><i class="fas fa-exclamation-triangle"></i> Configuración Pendiente</h5>
+                <p>No tienes configuradas las credenciales de OpenStack. Para acceder a recursos en tiempo real:</p>
+                <ol>
+                    <li>Ve a <strong>Configuración</strong> en el menú</li>
+                    <li>Configura tus credenciales de OpenStack</li>
+                    <li>Prueba la conexión</li>
+                </ol>
+                <a href="{{ url_for('settings') }}" class="btn btn-warning">
+                    <i class="fas fa-cog"></i> Configurar Ahora
+                </a>
+            </div>
+        </div>
+    </div>
+    {% endif %}
 </div>
 
 <style>
 .topology-icon {
     font-family: monospace;
+    font-size: 1.2em;
+    line-height: 1.2;
     white-space: pre-line;
-    font-size: 10px;
-    line-height: 1;
-    margin-bottom: 5px;
-    text-align: center;
-}
-
-.card {
-    border-radius: 10px;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-}
-
-.progress {
-    height: 8px;
+    color: #6c757d;
 }
 </style>
 {% endblock %}

@@ -577,9 +577,9 @@ def fetch_openstack_data_with_cache(endpoint, cache_key, cache_ttl=30):
     except Exception as e:
         logger.error(f"Error fetching OpenStack data for {endpoint}: {e}")
     
-    # Si no se pudo obtener datos reales, devolver estructura apropiada
+    # Si no se pudo obtener datos reales, devolver estructura apropiada con valores seguros
     if endpoint == '/quotas':
-        return {'total_vcpus': 0, 'used_vcpus': 0, 'total_ram': 0, 'used_ram': 0, 'total_instances': 0, 'used_instances': 0}
+        return {'total_vcpus': 1, 'used_vcpus': 0, 'total_ram': 1024, 'used_ram': 0, 'total_instances': 1, 'used_instances': 0}
     else:
         return []
 
@@ -769,8 +769,8 @@ def dashboard():
             user_stats['total_ram'] = sum(s.get('ram', s.get('flavor', {}).get('ram', 0)) if isinstance(s, dict) else 0 for s in servers)
             user_stats['total_disk'] = sum(s.get('disk', s.get('flavor', {}).get('disk', 0)) if isinstance(s, dict) else 0 for s in servers)
     
-    # Obtener recursos del sistema
-    system_resources = get_system_resources()
+    # Obtener recursos del sistema con valores seguros
+    system_resources = safe_system_resources()
     
     # Obtener imágenes y flavors disponibles para el dashboard (solo si tiene credenciales)
     images = []
@@ -1213,17 +1213,22 @@ def get_openstack_resources():
                 used_vcpus += vcpus if isinstance(vcpus, int) else 0
                 used_ram += ram if isinstance(ram, int) else 0
     
-    # Asegurar que quotas sea un diccionario
+    # Asegurar que quotas sea un diccionario con valores seguros
     if not isinstance(quotas, dict):
-        quotas = {'total_vcpus': 0, 'used_vcpus': 0, 'total_ram': 0, 'used_ram': 0, 'total_instances': 0, 'used_instances': 0}
+        quotas = {'total_vcpus': 1, 'used_vcpus': 0, 'total_ram': 1024, 'used_ram': 0, 'total_instances': 1, 'used_instances': 0}
+    
+    # Asegurar que los valores totales nunca sean 0 para evitar división por cero
+    total_vcpus = max(quotas.get('total_vcpus', 1), 1)
+    total_ram = max(quotas.get('total_ram', 1024), 1)
+    total_instances = max(quotas.get('total_instances', 1), 1)
     
     return {
-        'total_vcpus': quotas.get('total_vcpus', 0),
-        'used_vcpus': used_vcpus,
-        'total_ram': quotas.get('total_ram', 0),
-        'used_ram': used_ram,
-        'total_instances': quotas.get('total_instances', 0),
-        'used_instances': used_instances,
+        'total_vcpus': total_vcpus,
+        'used_vcpus': min(used_vcpus, total_vcpus),  # No puede usar más de lo disponible
+        'total_ram': total_ram,
+        'used_ram': min(used_ram, total_ram),
+        'total_instances': total_instances,
+        'used_instances': min(used_instances, total_instances),
         'servers': servers if isinstance(servers, list) else [],
         'last_updated': datetime.utcnow().isoformat()
     }
@@ -1247,6 +1252,62 @@ def get_vm_console_access(vm_id):
 
 # Registrar función de cierre de DB
 app.teardown_appcontext(close_db)
+
+# Filtro personalizado para divisiones seguras
+@app.template_filter('safe_divide')
+def safe_divide(numerator, denominator, default=0):
+    """División segura que evita ZeroDivisionError"""
+    try:
+        if denominator == 0:
+            return default
+        return (numerator / denominator)
+    except (TypeError, ValueError):
+        return default
+
+@app.template_filter('percentage')
+def percentage(numerator, denominator, default=0):
+    """Calcula porcentaje de forma segura"""
+    try:
+        numerator = float(numerator or 0)
+        denominator = float(denominator or 1)
+        if denominator == 0:
+            return default
+        result = (numerator / denominator) * 100
+        return min(round(result), 100)  # No puede ser más del 100%
+    except (TypeError, ValueError, ZeroDivisionError):
+        return default
+
+def safe_system_resources():
+    """Obtiene recursos del sistema con valores seguros"""
+    try:
+        resources = get_system_resources()
+        
+        # Asegurar estructura segura para OpenStack
+        if 'openstack' in resources:
+            openstack = resources['openstack']
+            openstack['total_vcpus'] = max(openstack.get('total_vcpus', 1), 1)
+            openstack['total_ram'] = max(openstack.get('total_ram', 1024), 1)
+            openstack['total_instances'] = max(openstack.get('total_instances', 1), 1)
+            openstack['used_vcpus'] = max(openstack.get('used_vcpus', 0), 0)
+            openstack['used_ram'] = max(openstack.get('used_ram', 0), 0)
+            openstack['used_instances'] = max(openstack.get('used_instances', 0), 0)
+        
+        return resources
+    except Exception as e:
+        logger.error(f"Error getting system resources: {e}")
+        return {
+            'openstack': {
+                'total_vcpus': 1, 'used_vcpus': 0,
+                'total_ram': 1024, 'used_ram': 0,
+                'total_instances': 1, 'used_instances': 0,
+                'servers': []
+            },
+            'linux': {
+                'total_vcpus': 1, 'used_vcpus': 0,
+                'total_ram': 1024, 'used_ram': 0,
+                'servers': []
+            }
+        }
 
 if __name__ == '__main__':
     # Inicializar base de datos
