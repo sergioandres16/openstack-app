@@ -1,0 +1,250 @@
+{% extends "base.html" %}
+
+{% block title %}Configuración - PUCP Cloud Orchestrator{% endblock %}
+
+{% block content %}
+<div class="container">
+    <div class="row">
+        <div class="col-md-8 offset-md-2">
+            <h2><i class="fas fa-cog"></i> Configuración</h2>
+            
+            <div class="card">
+                <div class="card-header">
+                    <h4><i class="fas fa-cloud"></i> Credenciales OpenStack</h4>
+                </div>
+                <div class="card-body">
+                    <form id="openstack-form">
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="form-group">
+                                    <label for="auth_url">Auth URL:</label>
+                                    <input type="url" class="form-control" id="auth_url" 
+                                           value="{{ credentials.auth_url if credentials else 'http://localhost:5000/v3' }}"
+                                           placeholder="http://localhost:5000/v3" required>
+                                    <small class="form-text text-muted">URL de autenticación de Keystone</small>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="form-group">
+                                    <label for="region_name">Región:</label>
+                                    <input type="text" class="form-control" id="region_name" 
+                                           value="{{ credentials.region_name if credentials else 'RegionOne' }}"
+                                           placeholder="RegionOne">
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="form-group">
+                                    <label for="username">Usuario:</label>
+                                    <input type="text" class="form-control" id="username" 
+                                           value="{{ credentials.username if credentials else '' }}"
+                                           placeholder="admin" required>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="form-group">
+                                    <label for="password">Contraseña:</label>
+                                    <input type="password" class="form-control" id="password" 
+                                           value="{{ credentials.password if credentials else '' }}"
+                                           placeholder="********" required>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="form-group">
+                                    <label for="project_name">Proyecto:</label>
+                                    <input type="text" class="form-control" id="project_name" 
+                                           value="{{ credentials.project_name if credentials else 'admin' }}"
+                                           placeholder="admin" required>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="form-group">
+                                    <label for="user_domain_name">Dominio de Usuario:</label>
+                                    <input type="text" class="form-control" id="user_domain_name" 
+                                           value="{{ credentials.user_domain_name if credentials else 'Default' }}"
+                                           placeholder="Default">
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="form-group">
+                                    <label for="project_domain_name">Dominio de Proyecto:</label>
+                                    <input type="text" class="form-control" id="project_domain_name" 
+                                           value="{{ credentials.project_domain_name if credentials else 'Default' }}"
+                                           placeholder="Default">
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="form-group">
+                            <button type="submit" class="btn btn-primary" id="save-btn">
+                                <i class="fas fa-save"></i> Guardar Credenciales
+                            </button>
+                            <button type="button" class="btn btn-secondary" id="test-connection">
+                                <i class="fas fa-plug"></i> Probar Conexión
+                            </button>
+                            <button type="button" class="btn btn-warning" id="clear-cache">
+                                <i class="fas fa-trash"></i> Limpiar Cache
+                            </button>
+                        </div>
+                        
+                        <!-- Loading indicator -->
+                        <div id="loading-indicator" class="text-center" style="display: none;">
+                            <div class="spinner-border text-primary" role="status">
+                                <span class="sr-only">Cargando...</span>
+                            </div>
+                            <p class="mt-2">Consultando OpenStack...</p>
+                        </div>
+                    </form>
+                </div>
+            </div>
+            
+            <div class="card mt-4">
+                <div class="card-header">
+                    <h4><i class="fas fa-info-circle"></i> Información</h4>
+                </div>
+                <div class="card-body">
+                    <div class="alert alert-info">
+                        <h5>Configuración OpenRC</h5>
+                        <p>Para configurar las credenciales de OpenStack, necesitas:</p>
+                        <ul>
+                            <li><strong>Auth URL:</strong> URL del servicio Keystone (ej: http://controller:5000/v3)</li>
+                            <li><strong>Usuario/Contraseña:</strong> Credenciales de tu usuario OpenStack</li>
+                            <li><strong>Proyecto:</strong> Nombre del proyecto al que perteneces</li>
+                            <li><strong>Dominios:</strong> Normalmente "Default" para instalaciones estándar</li>
+                        </ul>
+                        <p>Estas credenciales se almacenan de forma segura y se usan para acceder a los recursos de OpenStack en tu nombre.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function showLoading(show = true) {
+    const indicator = document.getElementById('loading-indicator');
+    const saveBtn = document.getElementById('save-btn');
+    const testBtn = document.getElementById('test-connection');
+    
+    if (show) {
+        indicator.style.display = 'block';
+        saveBtn.disabled = true;
+        testBtn.disabled = true;
+    } else {
+        indicator.style.display = 'none';
+        saveBtn.disabled = false;
+        testBtn.disabled = false;
+    }
+}
+
+document.getElementById('openstack-form').addEventListener('submit', function(e) {
+    e.preventDefault();
+    
+    showLoading(true);
+    
+    const formData = {
+        auth_url: document.getElementById('auth_url').value,
+        username: document.getElementById('username').value,
+        password: document.getElementById('password').value,
+        project_name: document.getElementById('project_name').value,
+        user_domain_name: document.getElementById('user_domain_name').value,
+        project_domain_name: document.getElementById('project_domain_name').value,
+        region_name: document.getElementById('region_name').value
+    };
+    
+    fetch('/settings/openstack', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(formData)
+    })
+    .then(response => response.json())
+    .then(data => {
+        showLoading(false);
+        if (data.success) {
+            showAlert('success', 'Credenciales guardadas exitosamente');
+        } else {
+            showAlert('error', 'Error: ' + data.error);
+        }
+    })
+    .catch(error => {
+        showLoading(false);
+        showAlert('error', 'Error de conexión: ' + error);
+    });
+});
+
+document.getElementById('test-connection').addEventListener('click', function() {
+    showLoading(true);
+    showAlert('info', 'Probando conexión a OpenStack...');
+    
+    fetch('/api/openstack/test', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        }
+    })
+    .then(response => response.json())
+    .then(data => {
+        showLoading(false);
+        if (data.success) {
+            showAlert('success', data.message + (data.projects_count ? ` (${data.projects_count} proyectos encontrados)` : ''));
+        } else {
+            showAlert('error', 'Error de conexión: ' + data.error);
+        }
+    })
+    .catch(error => {
+        showLoading(false);
+        showAlert('error', 'Error de conexión: ' + error);
+    });
+});
+
+document.getElementById('clear-cache').addEventListener('click', function() {
+    if (confirm('¿Estás seguro de que quieres limpiar el cache? Los datos se volverán a consultar desde OpenStack.')) {
+        fetch('/api/cache/clear', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showAlert('success', 'Cache limpiado exitosamente');
+            } else {
+                showAlert('error', 'Error: ' + data.error);
+            }
+        })
+        .catch(error => {
+            showAlert('error', 'Error: ' + error);
+        });
+    }
+});
+
+function showAlert(type, message) {
+    const alertDiv = document.createElement('div');
+    alertDiv.className = `alert alert-${type === 'error' ? 'danger' : type} alert-dismissible fade show`;
+    alertDiv.innerHTML = `
+        ${message}
+        <button type="button" class="close" data-dismiss="alert">
+            <span>&times;</span>
+        </button>
+    `;
+    
+    const container = document.querySelector('.container');
+    container.insertBefore(alertDiv, container.firstChild);
+    
+    setTimeout(() => {
+        alertDiv.remove();
+    }, 5000);
+}
+</script>
+{% endblock %}

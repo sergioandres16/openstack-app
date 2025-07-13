@@ -83,6 +83,17 @@ def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (user_id) REFERENCES users (id)
             );
+            
+            CREATE TABLE IF NOT EXISTS openstack_cache (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                cache_key TEXT NOT NULL,
+                cache_data TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                expires_at TIMESTAMP,
+                UNIQUE(user_id, cache_key),
+                FOREIGN KEY (user_id) REFERENCES users (id)
+            );
         ''')
         
         # Crear usuario admin por defecto
@@ -104,6 +115,184 @@ def hash_password(password):
 def verify_password(password, password_hash):
     """Verificar contraseña"""
     return hashlib.sha256(password.encode()).hexdigest() == password_hash
+
+def get_cached_data(cache_key, cache_ttl_minutes=30):
+    """Obtiene datos del cache si están vigentes"""
+    if 'user' not in session:
+        return None
+    
+    db = get_db()
+    cache_entry = db.execute('''
+        SELECT cache_data FROM openstack_cache 
+        WHERE user_id = ? AND cache_key = ? 
+        AND datetime(expires_at) > datetime('now')
+    ''', (session['user']['id'], cache_key)).fetchone()
+    
+    if cache_entry:
+        return json.loads(cache_entry['cache_data'])
+    return None
+
+def set_cached_data(cache_key, data, cache_ttl_minutes=30):
+    """Guarda datos en cache con TTL"""
+    if 'user' not in session:
+        return
+    
+    expires_at = datetime.utcnow() + timedelta(minutes=cache_ttl_minutes)
+    db = get_db()
+    
+    db.execute('''
+        INSERT OR REPLACE INTO openstack_cache 
+        (user_id, cache_key, cache_data, expires_at)
+        VALUES (?, ?, ?, ?)
+    ''', (session['user']['id'], cache_key, json.dumps(data), expires_at.isoformat()))
+    db.commit()
+
+def clear_user_cache():
+    """Limpia el cache del usuario actual"""
+    if 'user' not in session:
+        return
+    
+    db = get_db()
+    db.execute('DELETE FROM openstack_cache WHERE user_id = ?', (session['user']['id'],))
+    db.commit()
+
+def create_openstack_project_for_user(username, user_id):
+    """Crea un proyecto en OpenStack para el nuevo usuario usando credenciales admin"""
+    try:
+        # Usar credenciales de admin para crear el proyecto
+        admin_credentials = {
+            'auth_url': 'http://localhost:15000/v3',  # Usar túnel SSH
+            'username': 'admin',
+            'password': 'c3240d029b8f1374076ba9e5c88fc34e',  # Contraseña real del admin
+            'project_name': 'admin',
+            'user_domain_name': 'Default',
+            'project_domain_name': 'Default',
+            'region_name': 'RegionOne'
+        }
+        
+        # Obtener token de admin
+        auth_data = {
+            "auth": {
+                "identity": {
+                    "methods": ["password"],
+                    "password": {
+                        "user": {
+                            "name": admin_credentials['username'],
+                            "domain": {"name": admin_credentials['user_domain_name']},
+                            "password": admin_credentials['password']
+                        }
+                    }
+                },
+                "scope": {
+                    "project": {
+                        "name": admin_credentials['project_name'],
+                        "domain": {"name": admin_credentials['project_domain_name']}
+                    }
+                }
+            }
+        }
+        
+        # Obtener token de admin
+        response = requests.post(
+            f"{admin_credentials['auth_url']}/auth/tokens",
+            json=auth_data,
+            headers={'Content-Type': 'application/json'},
+            timeout=30
+        )
+        
+        if response.status_code != 201:
+            logger.error(f"Failed to get admin token: {response.status_code}")
+            return False
+        
+        admin_token = response.headers.get('X-Subject-Token')
+        
+        # Crear el proyecto
+        project_name = f"user-{username}"
+        project_data = {
+            "project": {
+                "name": project_name,
+                "description": f"Proyecto personal para {username}",
+                "enabled": True,
+                "domain_id": "default"
+            }
+        }
+        
+        headers = {
+            'X-Auth-Token': admin_token,
+            'Content-Type': 'application/json'
+        }
+        
+        # Crear proyecto
+        project_response = requests.post(
+            f"{admin_credentials['auth_url']}/projects",
+            json=project_data,
+            headers=headers,
+            timeout=30
+        )
+        
+        if project_response.status_code == 201:
+            project_info = project_response.json()
+            project_id = project_info['project']['id']
+            
+            # Crear usuario en OpenStack
+            user_data = {
+                "user": {
+                    "name": username,
+                    "email": f"{username}@pucp.edu.pe",
+                    "password": "defaultpass123",  # Contraseña temporal
+                    "enabled": True,
+                    "domain_id": "default"
+                }
+            }
+            
+            user_response = requests.post(
+                f"{admin_credentials['auth_url']}/users",
+                json=user_data,
+                headers=headers,
+                timeout=30
+            )
+            
+            if user_response.status_code == 201:
+                openstack_user_info = user_response.json()
+                openstack_user_id = openstack_user_info['user']['id']
+                
+                # Asignar rol de miembro al usuario en el proyecto
+                role_assignment = requests.put(
+                    f"{admin_credentials['auth_url']}/projects/{project_id}/users/{openstack_user_id}/roles/member",
+                    headers=headers,
+                    timeout=30
+                )
+                
+                # Guardar credenciales de OpenStack del usuario en la base de datos
+                db = get_db()
+                db.execute('''
+                    INSERT INTO openstack_credentials 
+                    (user_id, auth_url, username, password, project_name, user_domain_name, project_domain_name, region_name)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    user_id, 
+                    admin_credentials['auth_url'],
+                    username,
+                    "defaultpass123",  # El usuario debe cambiar esto
+                    project_name,
+                    'Default',
+                    'Default',
+                    'RegionOne'
+                ))
+                db.commit()
+                
+                logger.info(f"Created OpenStack project '{project_name}' and user '{username}'")
+                return True
+            else:
+                logger.error(f"Failed to create OpenStack user: {user_response.status_code}")
+                return False
+        else:
+            logger.error(f"Failed to create OpenStack project: {project_response.status_code}")
+            return False
+            
+    except Exception as e:
+        logger.error(f"Error creating OpenStack project for user {username}: {e}")
+        return False
 
 # Topologías predefinidas
 PREDEFINED_TOPOLOGIES = {
@@ -322,11 +511,68 @@ def make_openstack_request(method, service, endpoint, data=None):
         logger.error(f"Error making OpenStack request: {e}")
         return None
 
+def fetch_openstack_data_with_cache(endpoint, cache_key, cache_ttl=30):
+    """Obtiene datos de OpenStack con cache"""
+    # Intentar obtener del cache primero
+    cached_data = get_cached_data(cache_key, cache_ttl)
+    if cached_data:
+        logger.info(f"Using cached data for {cache_key}")
+        return cached_data
+    
+    # Si no hay cache, obtener de OpenStack
+    logger.info(f"Fetching fresh data from OpenStack for {cache_key}")
+    
+    if endpoint == '/images':
+        response = make_openstack_request('GET', 'image', '/images')
+        if response and response.status_code == 200:
+            data = response.json().get('images', [])
+            set_cached_data(cache_key, data, cache_ttl)
+            return data
+            
+    elif endpoint == '/flavors':
+        response = make_openstack_request('GET', 'compute', '/flavors/detail')
+        if response and response.status_code == 200:
+            data = response.json().get('flavors', [])
+            set_cached_data(cache_key, data, cache_ttl)
+            return data
+            
+    elif endpoint == '/quotas':
+        response = make_openstack_request('GET', 'compute', '/limits')
+        if response and response.status_code == 200:
+            limits = response.json().get('limits', {}).get('absolute', {})
+            data = {
+                'total_vcpus': limits.get('maxTotalCores', 0),
+                'used_vcpus': limits.get('totalCoresUsed', 0),
+                'total_ram': limits.get('maxTotalRAMSize', 0),
+                'used_ram': limits.get('totalRAMUsed', 0),
+                'total_instances': limits.get('maxTotalInstances', 0),
+                'used_instances': limits.get('totalInstancesUsed', 0)
+            }
+            set_cached_data(cache_key, data, cache_ttl)
+            return data
+            
+    elif endpoint == '/servers':
+        response = make_openstack_request('GET', 'compute', '/servers/detail')
+        if response and response.status_code == 200:
+            data = response.json().get('servers', [])
+            set_cached_data(cache_key, data, cache_ttl)
+            return data
+            
+    elif endpoint == '/networks':
+        response = make_openstack_request('GET', 'network', '/networks')
+        if response and response.status_code == 200:
+            data = response.json().get('networks', [])
+            set_cached_data(cache_key, data, cache_ttl)
+            return data
+    
+    # Si no se pudo obtener datos reales, devolver lista vacía
+    logger.warning(f"Could not fetch OpenStack data for {endpoint}")
+    return []
+
 def make_api_request(method, endpoint, data=None, params=None):
-    """Maneja requests a APIs internas y OpenStack"""
+    """Maneja requests a APIs internas y OpenStack con cache"""
     logger.info(f"API request: {method} {endpoint}")
     
-    # Simulación para endpoints internos que no requieren OpenStack
     class MockResponse:
         def __init__(self, json_data, status_code):
             self.json_data = json_data
@@ -335,42 +581,35 @@ def make_api_request(method, endpoint, data=None, params=None):
         def json(self):
             return self.json_data
     
-    # Mapear endpoints a OpenStack APIs
+    # Mapear endpoints a OpenStack APIs con cache
     if endpoint == '/images':
-        response = make_openstack_request('GET', 'image', '/images')
-        if response and response.status_code == 200:
-            images = response.json().get('images', [])
-            return MockResponse(images, 200)
-        else:
-            # Fallback a datos simulados
-            return MockResponse([
-                {'id': '1', 'name': 'ubuntu-20.04', 'status': 'active'},
-                {'id': '2', 'name': 'centos-8', 'status': 'active'}
-            ], 200)
+        data = fetch_openstack_data_with_cache('/images', 'images', 60)  # Cache por 1 hora
+        return MockResponse(data, 200)
     
     elif endpoint == '/openstack/quotas/admin':
-        response = make_openstack_request('GET', 'compute', '/limits')
-        if response and response.status_code == 200:
-            limits = response.json().get('limits', {}).get('absolute', {})
-            return MockResponse({
-                'total_vcpus': limits.get('maxTotalCores', 100),
-                'used_vcpus': limits.get('totalCoresUsed', 25),
-                'total_ram': limits.get('maxTotalRAMSize', 102400),
-                'used_ram': limits.get('totalRAMUsed', 25600),
-                'total_instances': limits.get('maxTotalInstances', 50),
-                'used_instances': limits.get('totalInstancesUsed', 12)
-            }, 200)
-        else:
-            # Fallback
-            return MockResponse({
-                'total_vcpus': 100, 'used_vcpus': 25,
-                'total_ram': 102400, 'used_ram': 25600,
-                'total_instances': 50, 'used_instances': 12
-            }, 200)
+        data = fetch_openstack_data_with_cache('/quotas', 'quotas', 15)  # Cache por 15 min
+        return MockResponse(data, 200)
+        
+    elif endpoint == '/flavors':
+        data = fetch_openstack_data_with_cache('/flavors', 'flavors', 60)  # Cache por 1 hora
+        return MockResponse(data, 200)
+        
+    elif endpoint == '/servers':
+        data = fetch_openstack_data_with_cache('/servers', 'servers', 5)  # Cache por 5 min
+        return MockResponse(data, 200)
+        
+    elif endpoint == '/networks':
+        data = fetch_openstack_data_with_cache('/networks', 'networks', 30)  # Cache por 30 min
+        return MockResponse(data, 200)
     
-    # Para otros endpoints, usar datos simulados
+    # Para endpoints internos (slices), usar base de datos local
     if endpoint == '/slices':
-        return MockResponse([], 200)
+        db = get_db()
+        slices = db.execute(
+            'SELECT * FROM slices WHERE user_id = ? ORDER BY created_at DESC',
+            (session['user']['id'],)
+        ).fetchall()
+        return MockResponse([dict(s) for s in slices], 200)
     elif endpoint.startswith('/slices/') and endpoint.endswith('/nodes'):
         return MockResponse([], 200)
     
@@ -416,6 +655,68 @@ def login():
     
     return render_template('login.html')
 
+@app.route('/register', methods=['GET', 'POST'])
+def register():
+    """Página de registro de usuarios"""
+    if request.method == 'POST':
+        username = request.form.get('username')
+        password = request.form.get('password')
+        confirm_password = request.form.get('confirm_password')
+        email = request.form.get('email')
+        
+        # Validaciones
+        if not username or not password or not email:
+            flash('Todos los campos son requeridos', 'error')
+            return render_template('register.html')
+        
+        if password != confirm_password:
+            flash('Las contraseñas no coinciden', 'error')
+            return render_template('register.html')
+        
+        if len(password) < 6:
+            flash('La contraseña debe tener al menos 6 caracteres', 'error')
+            return render_template('register.html')
+        
+        db = get_db()
+        
+        # Verificar si el usuario ya existe
+        existing_user = db.execute(
+            'SELECT id FROM users WHERE username = ? OR email = ?',
+            (username, email)
+        ).fetchone()
+        
+        if existing_user:
+            flash('El usuario o email ya existe', 'error')
+            return render_template('register.html')
+        
+        try:
+            # Crear usuario en base de datos
+            password_hash = hash_password(password)
+            cursor = db.execute('''
+                INSERT INTO users (username, password_hash, email, role)
+                VALUES (?, ?, ?, ?)
+            ''', (username, password_hash, email, 'user'))
+            
+            user_id = cursor.lastrowid
+            db.commit()
+            
+            # Crear proyecto en OpenStack para el nuevo usuario
+            project_created = create_openstack_project_for_user(username, user_id)
+            
+            if project_created:
+                flash(f'Usuario {username} creado exitosamente con proyecto OpenStack', 'success')
+            else:
+                flash(f'Usuario {username} creado, pero hubo un problema creando el proyecto OpenStack', 'warning')
+            
+            return redirect(url_for('login'))
+            
+        except Exception as e:
+            logger.error(f"Error creating user: {e}")
+            flash('Error al crear el usuario', 'error')
+            return render_template('register.html')
+    
+    return render_template('register.html')
+
 @app.route('/logout')
 def logout():
     """Cerrar sesión"""
@@ -427,34 +728,45 @@ def logout():
 @login_required
 def dashboard():
     """Dashboard principal"""
-    # Obtener estadísticas del usuario
+    # Obtener estadísticas reales del usuario desde base de datos
+    db = get_db()
+    slices = db.execute(
+        'SELECT * FROM slices WHERE user_id = ?',
+        (session['user']['id'],)
+    ).fetchall()
+    
     user_stats = {
-        'total_slices': 0,
-        'active_slices': 0,
+        'total_slices': len(slices),
+        'active_slices': len([s for s in slices if s['status'] == 'active']),
+        'draft_slices': len([s for s in slices if s['status'] == 'draft']),
         'total_vms': 0,
         'total_vcpus': 0,
         'total_ram': 0,
         'total_disk': 0
     }
     
-    # Obtener slices del usuario
-    response = make_api_request('GET', '/slices')
-    if response and response.status_code == 200:
-        slices = response.json()
-        user_stats['total_slices'] = len(slices)
-        user_stats['active_slices'] = len([s for s in slices if s['status'] == 'active'])
-        user_stats['total_vcpus'] = sum(s.get('total_vcpus', 0) for s in slices)
-        user_stats['total_ram'] = sum(s.get('total_ram', 0) for s in slices)
-        user_stats['total_disk'] = sum(s.get('total_disk', 0) for s in slices)
+    # Obtener VMs reales del proyecto del usuario en OpenStack
+    servers = fetch_openstack_data_with_cache('/servers', 'user_servers', 5)
+    if servers:
+        user_stats['total_vms'] = len(servers)
+        user_stats['total_vcpus'] = sum(s.get('vcpus', 0) for s in servers)
+        user_stats['total_ram'] = sum(s.get('ram', 0) for s in servers)
+        user_stats['total_disk'] = sum(s.get('disk', 0) for s in servers)
     
     # Obtener recursos del sistema
     system_resources = get_system_resources()
+    
+    # Obtener imágenes y flavors disponibles para el dashboard
+    images = fetch_openstack_data_with_cache('/images', 'images', 60)
+    flavors = fetch_openstack_data_with_cache('/flavors', 'flavors', 60)
     
     return render_template('dashboard.html', 
                          user=session['user'],
                          user_stats=user_stats,
                          system_resources=system_resources,
-                         topologies=PREDEFINED_TOPOLOGIES)
+                         topologies=PREDEFINED_TOPOLOGIES,
+                         recent_images=images[:5] if images else [],
+                         available_flavors=flavors[:10] if flavors else [])
 
 @app.route('/slices')
 @login_required
@@ -635,10 +947,55 @@ def save_openstack_credentials():
             ))
         
         db.commit()
+        
+        # Limpiar cache cuando se actualizan las credenciales
+        clear_user_cache()
+        
         return jsonify({'success': True, 'message': 'Credenciales guardadas exitosamente'})
         
     except Exception as e:
         logger.error(f"Error saving OpenStack credentials: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/openstack/test', methods=['POST'])
+@login_required
+def test_openstack_connection():
+    """Probar conexión a OpenStack"""
+    try:
+        token = get_openstack_token()
+        if token:
+            # Probar una llamada simple para verificar conectividad
+            response = make_openstack_request('GET', 'identity', '/auth/projects')
+            if response and response.status_code == 200:
+                return jsonify({
+                    'success': True, 
+                    'message': 'Conexión exitosa con OpenStack',
+                    'projects_count': len(response.json().get('projects', []))
+                })
+            else:
+                return jsonify({
+                    'success': False, 
+                    'error': 'No se pudo obtener información de proyectos'
+                }), 400
+        else:
+            return jsonify({
+                'success': False, 
+                'error': 'No se pudo obtener token de autenticación'
+            }), 400
+            
+    except Exception as e:
+        logger.error(f"Error testing OpenStack connection: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/cache/clear', methods=['POST'])
+@login_required
+def clear_cache():
+    """Limpiar cache del usuario"""
+    try:
+        clear_user_cache()
+        return jsonify({'success': True, 'message': 'Cache limpiado exitosamente'})
+    except Exception as e:
+        logger.error(f"Error clearing cache: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/resources')
@@ -818,24 +1175,24 @@ def get_linux_resources():
 
 def get_openstack_resources():
     """Obtener recursos de OpenStack"""
-    # Intentar obtener de la API de OpenStack
-    response = make_api_request('GET', '/openstack/quotas/admin')
-    if response and response.status_code == 200:
-        return response.json()
+    # Obtener datos reales con cache
+    quotas = fetch_openstack_data_with_cache('/quotas', 'quotas', 15)
+    servers = fetch_openstack_data_with_cache('/servers', 'servers', 5)
     
-    # Fallback a datos simulados
+    # Calcular estadísticas de uso real
+    used_vcpus = sum(server.get('vcpus', 0) for server in servers if server.get('status') == 'ACTIVE')
+    used_ram = sum(server.get('ram', 0) for server in servers if server.get('status') == 'ACTIVE')
+    used_instances = len([s for s in servers if s.get('status') == 'ACTIVE'])
+    
     return {
-        'total_vcpus': 100,
-        'used_vcpus': 25,
-        'total_ram': 102400,  # MB
-        'used_ram': 25600,
-        'total_instances': 50,
-        'used_instances': 12,
-        'projects': [
-            {'name': 'admin', 'instances': 5, 'vcpus': 10},
-            {'name': 'demo', 'instances': 3, 'vcpus': 6},
-            {'name': 'pucp-default', 'instances': 4, 'vcpus': 9}
-        ]
+        'total_vcpus': quotas.get('total_vcpus', 0),
+        'used_vcpus': used_vcpus,
+        'total_ram': quotas.get('total_ram', 0),
+        'used_ram': used_ram,
+        'total_instances': quotas.get('total_instances', 0),
+        'used_instances': used_instances,
+        'servers': servers,
+        'last_updated': datetime.utcnow().isoformat()
     }
 
 def get_vm_console_access(vm_id):
