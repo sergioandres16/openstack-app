@@ -196,6 +196,9 @@
                     <button type="button" class="btn btn-outline-secondary" id="dryRunSlice">
                         <i class="fas fa-play"></i> Dry Run
                     </button>
+                    <button type="button" class="btn btn-outline-danger" id="testCreateResources">
+                        <i class="fas fa-hammer"></i> Test Create
+                    </button>
                     <a href="{{ url_for('list_slices') }}" class="btn btn-secondary">
                         <i class="fas fa-times"></i> Cancelar
                     </a>
@@ -379,6 +382,12 @@ $(document).ready(function() {
     $('#dryRunSlice').on('click', function(e) {
         e.preventDefault();
         dryRunSlice();
+    });
+    
+    // Test Create Resources button
+    $('#testCreateResources').on('click', function(e) {
+        e.preventDefault();
+        testCreateResources();
     });
 });
 
@@ -683,6 +692,69 @@ function dryRunSlice() {
         error: function(xhr, status, error) {
             console.error('❌ Dry run error:', xhr);
             let errorMessage = 'Error en simulación';
+            if (xhr.responseJSON && xhr.responseJSON.error) {
+                errorMessage = xhr.responseJSON.error;
+                if (xhr.responseJSON.traceback) {
+                    console.error('Error traceback:', xhr.responseJSON.traceback);
+                }
+            }
+            showSimpleAlert('error', errorMessage);
+        }
+    });
+}
+
+function testCreateResources() {
+    console.log('🔨 Testing OpenStack resource creation...');
+    showSimpleAlert('info', 'Probando creación de recursos en OpenStack...');
+    
+    $.ajax({
+        url: '/api/debug/test-openstack-create',
+        method: 'POST',
+        contentType: 'application/json',
+        data: JSON.stringify({}),
+        timeout: 60000, // 1 minute
+        success: function(response) {
+            console.log('✅ Create test response:', response);
+            
+            if (response.success) {
+                const results = response.test_results;
+                let message = `Test de Creación de Recursos:\\n`;
+                message += `- Red Pública: ${results.public_network?.success ? '✅' : '❌'}\\n`;
+                message += `- Red Privada: ${results.private_network?.success ? '✅' : '❌'}\\n`;
+                message += `- Flavors: ${results.flavors?.success ? '✅' : '❌'}\\n`;
+                message += `- Imágenes: ${results.images?.success ? '✅' : '❌'}\\n`;
+                
+                if (results.public_network?.network_id) {
+                    message += `\\nRed Pública ID: ${results.public_network.network_id}`;
+                }
+                
+                if (results.private_network?.success) {
+                    message += `\\nRed de Prueba: Creada y eliminada exitosamente`;
+                } else if (results.private_network?.error) {
+                    message += `\\nError en Red Privada: ${results.private_network.error}`;
+                }
+                
+                if (results.flavors?.count) {
+                    message += `\\nFlavors disponibles: ${results.flavors.count}`;
+                }
+                
+                if (results.images?.active_count) {
+                    message += `\\nImágenes activas: ${results.images.active_count}`;
+                }
+                
+                alert(message);
+                
+                const allPassed = results.public_network?.success && results.private_network?.success && results.flavors?.success && results.images?.success;
+                showSimpleAlert(allPassed ? 'success' : 'error', 
+                    allPassed ? 'Todos los tests de creación pasaron' : 'Algunos tests de creación fallaron - revisar consola'
+                );
+            } else {
+                showSimpleAlert('error', 'Error en test de creación: ' + response.error);
+            }
+        },
+        error: function(xhr, status, error) {
+            console.error('❌ Create test error:', xhr);
+            let errorMessage = 'Error al probar creación de recursos';
             if (xhr.responseJSON && xhr.responseJSON.error) {
                 errorMessage = xhr.responseJSON.error;
                 if (xhr.responseJSON.traceback) {

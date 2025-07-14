@@ -985,10 +985,19 @@ def create_slice():
         logger.info("Attempting to create slice with topology-aware function...")
         try:
             success = create_openstack_slice(slice_id, slice_config, credentials)
+            logger.info(f"Topology-aware creation result: {success}")
         except Exception as e:
+            import traceback
             logger.warning(f"Topology-aware creation failed: {e}")
+            logger.warning(f"Topology-aware creation traceback: {traceback.format_exc()}")
             logger.info("Falling back to simple slice creation...")
-            success = create_simple_openstack_slice(slice_id, slice_config, credentials)
+            try:
+                success = create_simple_openstack_slice(slice_id, slice_config, credentials)
+                logger.info(f"Simple creation result: {success}")
+            except Exception as e2:
+                logger.error(f"Simple creation also failed: {e2}")
+                logger.error(f"Simple creation traceback: {traceback.format_exc()}")
+                success = False
         
         if success:
             # Actualizar estado del slice
@@ -2574,6 +2583,134 @@ def slice_dry_run():
         import traceback
         error_details = traceback.format_exc()
         logger.error(f"Dry run error: {e}")
+        logger.error(f"Full traceback: {error_details}")
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'traceback': error_details
+        }), 500
+
+@app.route('/api/debug/test-openstack-create', methods=['POST'])
+@login_required
+def test_openstack_create():
+    """Probar creación de recursos básicos en OpenStack"""
+    try:
+        logger.info("=== TESTING OPENSTACK RESOURCE CREATION ===")
+        
+        # Obtener credenciales y token
+        credentials = get_user_openstack_credentials()
+        if not credentials:
+            return jsonify({'success': False, 'error': 'No OpenStack credentials'}), 400
+        
+        token = get_openstack_token()
+        if not token:
+            return jsonify({'success': False, 'error': 'Cannot get OpenStack token'}), 400
+        
+        headers = {
+            'X-Auth-Token': token,
+            'Content-Type': 'application/json'
+        }
+        
+        test_results = {}
+        
+        # Test 1: Buscar red pública
+        logger.info("Test 1: Finding public network...")
+        try:
+            public_network_id = get_public_network_id(headers)
+            test_results['public_network'] = {
+                'success': bool(public_network_id),
+                'network_id': public_network_id
+            }
+            logger.info(f"Public network test: {'✅' if public_network_id else '❌'}")
+        except Exception as e:
+            test_results['public_network'] = {'success': False, 'error': str(e)}
+            logger.error(f"Public network test failed: {e}")
+        
+        # Test 2: Crear red privada de prueba
+        logger.info("Test 2: Creating test private network...")
+        try:
+            test_network_config = {
+                'name': f"test-network-{int(datetime.utcnow().timestamp())}",
+                'cidr': '192.168.99.0/24',
+                'enable_dhcp': True,
+                'description': 'Test network for debugging'
+            }
+            
+            network_id = create_slice_network(test_network_config, headers, 'test-slice')
+            test_results['private_network'] = {
+                'success': bool(network_id),
+                'network_id': network_id,
+                'config': test_network_config
+            }
+            logger.info(f"Private network test: {'✅' if network_id else '❌'}")
+            
+            # Si se creó exitosamente, intentar eliminarla
+            if network_id:
+                logger.info(f"Attempting to clean up test network {network_id}...")
+                try:
+                    delete_response = requests.delete(
+                        f"http://localhost:{OPENSTACK_SERVICE_PORTS['neutron']['local']}/v2.0/networks/{network_id}",
+                        headers=headers,
+                        timeout=30
+                    )
+                    logger.info(f"Network cleanup: {delete_response.status_code}")
+                except Exception as cleanup_error:
+                    logger.warning(f"Network cleanup failed: {cleanup_error}")
+            
+        except Exception as e:
+            import traceback
+            test_results['private_network'] = {
+                'success': False, 
+                'error': str(e),
+                'traceback': traceback.format_exc()
+            }
+            logger.error(f"Private network test failed: {e}")
+        
+        # Test 3: Listar flavors disponibles
+        logger.info("Test 3: Listing available flavors...")
+        try:
+            flavors_response = make_openstack_request('GET', 'compute', '/flavors')
+            if flavors_response and flavors_response.status_code == 200:
+                flavors = flavors_response.json().get('flavors', [])
+                test_results['flavors'] = {
+                    'success': True,
+                    'count': len(flavors),
+                    'flavors': [{'id': f['id'], 'name': f['name']} for f in flavors[:3]]  # Solo primeros 3
+                }
+            else:
+                test_results['flavors'] = {'success': False, 'error': 'Failed to get flavors'}
+        except Exception as e:
+            test_results['flavors'] = {'success': False, 'error': str(e)}
+        
+        # Test 4: Listar imágenes disponibles
+        logger.info("Test 4: Listing available images...")
+        try:
+            images_response = make_openstack_request('GET', 'image', '/images')
+            if images_response and images_response.status_code == 200:
+                images = images_response.json().get('images', [])
+                active_images = [img for img in images if img.get('status') == 'active']
+                test_results['images'] = {
+                    'success': True,
+                    'total_count': len(images),
+                    'active_count': len(active_images),
+                    'sample_images': [{'id': img['id'], 'name': img['name']} for img in active_images[:3]]
+                }
+            else:
+                test_results['images'] = {'success': False, 'error': 'Failed to get images'}
+        except Exception as e:
+            test_results['images'] = {'success': False, 'error': str(e)}
+        
+        logger.info(f"=== OPENSTACK CREATE TESTS RESULTS: {test_results} ===")
+        
+        return jsonify({
+            'success': True,
+            'test_results': test_results
+        })
+        
+    except Exception as e:
+        import traceback
+        error_details = traceback.format_exc()
+        logger.error(f"OpenStack create test error: {e}")
         logger.error(f"Full traceback: {error_details}")
         return jsonify({
             'success': False,
