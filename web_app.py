@@ -2707,6 +2707,9 @@ def test_openstack_create():
 def create_ultra_simple_slice(slice_id, config, credentials):
     """Crear slice usando exactamente la misma lógica que el test exitoso"""
     try:
+        # Import required configuration
+        from microservicios.openstack_config_ssh import OPENSTACK_SERVICE_PORTS
+        
         logger.info(f"=== ULTRA SIMPLE SLICE CREATION START ===")
         logger.info(f"Slice ID: {slice_id}")
         logger.info(f"Config: {config}")
