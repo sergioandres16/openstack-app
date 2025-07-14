@@ -551,28 +551,48 @@ def make_openstack_request(method, service, endpoint, data=None):
 
 def fetch_openstack_data_with_cache(endpoint, cache_key, cache_ttl=30):
     """Obtiene datos de OpenStack con cache"""
+    print(f"[FETCH] Starting fetch for {endpoint} (cache_key: {cache_key})")
+    
     try:
         # Intentar obtener del cache primero
         cached_data = get_cached_data(cache_key, cache_ttl)
         if cached_data:
+            print(f"[FETCH] Using cached data for {cache_key}")
             logger.info(f"Using cached data for {cache_key}")
             return cached_data
         
         # Si no hay cache, obtener de OpenStack
+        print(f"[FETCH] No cache found, fetching fresh data from OpenStack for {cache_key}")
         logger.info(f"Fetching fresh data from OpenStack for {cache_key}")
         
+        # Verificar credenciales primero
+        credentials = get_user_openstack_credentials()
+        token = get_openstack_token()
+        print(f"[FETCH] Credentials available: {credentials is not None}")
+        print(f"[FETCH] Token available: {token is not None}")
+        
+        if not credentials or not token:
+            print(f"[FETCH] Missing credentials or token - cannot make OpenStack request")
+            return []
+        
         if endpoint == '/images':
+            print(f"[FETCH] Making request to OpenStack images API...")
             response = make_openstack_request('GET', 'image', '/images')
+            print(f"[FETCH] Images response: {response}")
             if response and response.status_code == 200:
                 data = response.json().get('images', [])
+                print(f"[FETCH] Retrieved {len(data)} images from OpenStack")
                 if isinstance(data, list):
                     set_cached_data(cache_key, data, cache_ttl)
                     return data
                 
         elif endpoint == '/flavors':
+            print(f"[FETCH] Making request to OpenStack flavors API...")
             response = make_openstack_request('GET', 'compute', '/flavors/detail')
+            print(f"[FETCH] Flavors response: {response}")
             if response and response.status_code == 200:
                 data = response.json().get('flavors', [])
+                print(f"[FETCH] Retrieved {len(data)} flavors from OpenStack")
                 if isinstance(data, list):
                     set_cached_data(cache_key, data, cache_ttl)
                     return data
@@ -608,10 +628,14 @@ def fetch_openstack_data_with_cache(endpoint, cache_key, cache_ttl=30):
                     set_cached_data(cache_key, data, cache_ttl)
                     return data
         
+        print(f"[FETCH] No valid response received for {endpoint}")
+        
     except Exception as e:
+        print(f"[FETCH] Exception occurred: {e}")
         logger.error(f"Error fetching OpenStack data for {endpoint}: {e}")
     
     # Si no se pudo obtener datos reales, devolver estructura apropiada con valores seguros
+    print(f"[FETCH] Returning fallback data for {endpoint}")
     if endpoint == '/quotas':
         return {'total_vcpus': 1, 'used_vcpus': 0, 'total_ram': 1024, 'used_ram': 0, 'total_instances': 1, 'used_instances': 0}
     else:
@@ -1826,53 +1850,123 @@ def test_create_slice():
 def get_openstack_flavors():
     """Obtener flavors disponibles en OpenStack"""
     print("=" * 50)
-    print("FLAVORS ENDPOINT CALLED")
+    print("FLAVORS ENDPOINT CALLED - GETTING REAL DATA")
     print("=" * 50)
     
-    # SIEMPRE retornar datos por defecto para testing
-    default_flavors = [
-        {'id': 'm1.tiny', 'name': 'm1.tiny', 'vcpus': 1, 'ram': 512, 'disk': 1},
-        {'id': 'm1.small', 'name': 'm1.small', 'vcpus': 1, 'ram': 2048, 'disk': 20},
-        {'id': 'm1.medium', 'name': 'm1.medium', 'vcpus': 2, 'ram': 4096, 'disk': 40},
-        {'id': 'm1.large', 'name': 'm1.large', 'vcpus': 4, 'ram': 8192, 'disk': 80}
-    ]
-    
-    response_data = {
-        'success': True,
-        'flavors': default_flavors,
-        'debug': 'Flavors endpoint working correctly'
-    }
-    
-    print(f"RETURNING FLAVORS: {response_data}")
-    print("=" * 50)
-    
-    return jsonify(response_data)
+    try:
+        # Intentar obtener datos reales de OpenStack
+        flavors_data = fetch_openstack_data_with_cache('/flavors', 'flavors', 60)
+        print(f"Raw flavors from OpenStack: {flavors_data}")
+        
+        if isinstance(flavors_data, list) and len(flavors_data) > 0:
+            # Procesar flavors reales
+            processed_flavors = []
+            for flavor in flavors_data:
+                if isinstance(flavor, dict):
+                    is_public = flavor.get('os-flavor-access:is_public', True)
+                    if is_public:
+                        processed_flavors.append({
+                            'id': flavor.get('id'),
+                            'name': flavor.get('name'),
+                            'vcpus': flavor.get('vcpus', 1),
+                            'ram': flavor.get('ram', 1024),
+                            'disk': flavor.get('disk', 10),
+                            'public': is_public
+                        })
+            
+            if len(processed_flavors) > 0:
+                print(f"RETURNING {len(processed_flavors)} REAL FLAVORS")
+                return jsonify({
+                    'success': True,
+                    'flavors': processed_flavors,
+                    'source': 'openstack_real'
+                })
+        
+        # Si no hay datos reales, usar fallback
+        print("NO REAL FLAVORS FOUND - USING FALLBACK")
+        fallback_flavors = [
+            {'id': 'fallback-tiny', 'name': 'Fallback Tiny', 'vcpus': 1, 'ram': 512, 'disk': 1},
+            {'id': 'fallback-small', 'name': 'Fallback Small', 'vcpus': 1, 'ram': 2048, 'disk': 20}
+        ]
+        
+        return jsonify({
+            'success': True,
+            'flavors': fallback_flavors,
+            'source': 'fallback',
+            'debug': 'No real OpenStack flavors available'
+        })
+        
+    except Exception as e:
+        print(f"ERROR GETTING FLAVORS: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'source': 'error'
+        }), 500
 
 @app.route('/api/openstack/images')
 def get_openstack_images():
     """Obtener imágenes disponibles en OpenStack"""
     print("=" * 50)
-    print("IMAGES ENDPOINT CALLED")
+    print("IMAGES ENDPOINT CALLED - GETTING REAL DATA")
     print("=" * 50)
     
-    # SIEMPRE retornar datos por defecto para testing
-    default_images = [
-        {'id': 'ubuntu-20.04', 'name': 'Ubuntu 20.04 LTS', 'status': 'active', 'size': 2147483648},
-        {'id': 'ubuntu-22.04', 'name': 'Ubuntu 22.04 LTS', 'status': 'active', 'size': 2147483648},
-        {'id': 'centos-8', 'name': 'CentOS 8 Stream', 'status': 'active', 'size': 2147483648},
-        {'id': 'debian-11', 'name': 'Debian 11 Bullseye', 'status': 'active', 'size': 2147483648}
-    ]
-    
-    response_data = {
-        'success': True,
-        'images': default_images,
-        'debug': 'Images endpoint working correctly'
-    }
-    
-    print(f"RETURNING IMAGES: {response_data}")
-    print("=" * 50)
-    
-    return jsonify(response_data)
+    try:
+        # Intentar obtener datos reales de OpenStack
+        images_data = fetch_openstack_data_with_cache('/images', 'images', 60)
+        print(f"Raw images from OpenStack: {images_data}")
+        
+        if isinstance(images_data, list) and len(images_data) > 0:
+            # Procesar imágenes reales
+            processed_images = []
+            for image in images_data:
+                if isinstance(image, dict):
+                    status = image.get('status', '').lower()
+                    visibility = image.get('visibility', 'private')
+                    
+                    # Incluir imágenes activas y públicas/compartidas
+                    if status == 'active' and visibility in ['public', 'shared', 'community']:
+                        processed_images.append({
+                            'id': image.get('id'),
+                            'name': image.get('name', 'Unknown'),
+                            'status': status,
+                            'size': image.get('size', 0),
+                            'disk_format': image.get('disk_format'),
+                            'container_format': image.get('container_format'),
+                            'visibility': visibility,
+                            'os_type': image.get('os_type', 'unknown'),
+                            'created_at': image.get('created_at')
+                        })
+            
+            if len(processed_images) > 0:
+                print(f"RETURNING {len(processed_images)} REAL IMAGES")
+                return jsonify({
+                    'success': True,
+                    'images': processed_images,
+                    'source': 'openstack_real'
+                })
+        
+        # Si no hay datos reales, usar fallback
+        print("NO REAL IMAGES FOUND - USING FALLBACK")
+        fallback_images = [
+            {'id': 'fallback-ubuntu', 'name': 'Fallback Ubuntu', 'status': 'active', 'size': 2147483648},
+            {'id': 'fallback-centos', 'name': 'Fallback CentOS', 'status': 'active', 'size': 2147483648}
+        ]
+        
+        return jsonify({
+            'success': True,
+            'images': fallback_images,
+            'source': 'fallback',
+            'debug': 'No real OpenStack images available'
+        })
+        
+    except Exception as e:
+        print(f"ERROR GETTING IMAGES: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'source': 'error'
+        }), 500
 
 @app.route('/api/test')
 def test_endpoint():
