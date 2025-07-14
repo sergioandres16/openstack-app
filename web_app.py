@@ -1003,8 +1003,11 @@ def create_slice():
             }), 500
             
     except Exception as e:
+        import traceback
+        error_details = traceback.format_exc()
         logger.error(f"Error creating slice: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
+        logger.error(f"Full traceback: {error_details}")
+        return jsonify({'success': False, 'error': str(e), 'details': error_details}), 500
 
 def create_openstack_slice(slice_id, config, credentials):
     """Crea un slice completo en OpenStack con topología específica"""
@@ -1059,24 +1062,45 @@ def create_openstack_slice(slice_id, config, credentials):
             return False
         
         # Paso 2: Crear redes según la topología
-        network_configs = create_topology_networks(topology_type, config, slice_id)
-        created_networks = []
-        
-        for net_config in network_configs:
-            network_id = create_slice_network(net_config, headers, slice_id)
-            if network_id:
-                created_networks.append({
-                    'id': network_id,
-                    'name': net_config['name'],
-                    'type': net_config.get('network_type', 'data')
-                })
-        
-        if not created_networks:
-            logger.error("No se pudo crear ninguna red para el slice")
-            return False
-        
-        # Usar la primera red como principal
-        primary_network_id = created_networks[0]['id']
+        try:
+            network_configs = create_topology_networks(topology_type, config, slice_id)
+            created_networks = []
+            
+            for net_config in network_configs:
+                network_id = create_slice_network(net_config, headers, slice_id)
+                if network_id:
+                    created_networks.append({
+                        'id': network_id,
+                        'name': net_config['name'],
+                        'type': net_config.get('network_type', 'data')
+                    })
+            
+            if not created_networks:
+                logger.error("No se pudo crear ninguna red para el slice")
+                return False
+            
+            # Usar la primera red como principal
+            primary_network_id = created_networks[0]['id']
+        except Exception as e:
+            logger.error(f"Error creating networks: {e}")
+            # Fallback a creación simple
+            if 'network' in config:
+                primary_network_id = create_slice_network(config['network'], headers, slice_id)
+            else:
+                # Crear red básica
+                basic_network = {
+                    'name': f"{slice_id[:8]}-network",
+                    'cidr': '192.168.100.0/24',
+                    'enable_dhcp': True,
+                    'description': f"Red básica para slice {slice_id}"
+                }
+                primary_network_id = create_slice_network(basic_network, headers, slice_id)
+            
+            if not primary_network_id:
+                logger.error("Error creando red básica del slice")
+                return False
+                
+            created_networks = [{'id': primary_network_id, 'name': f"{slice_id[:8]}-network", 'type': 'data'}]
         
         # Paso 3: Crear router y conectar redes
         router_id = create_slice_router(slice_id, primary_network_id, public_network_id, headers)
@@ -1086,17 +1110,27 @@ def create_openstack_slice(slice_id, config, credentials):
         
         # Paso 4: Crear VMs según la topología
         vm_ids = []
-        vm_configs = create_topology_vms(topology_type, config, created_networks)
-        
-        for vm_config in vm_configs:
-            # Determinar a qué redes conectar la VM según la topología
-            vm_networks = get_vm_networks_for_topology(topology_type, vm_config, created_networks, public_network_id)
+        try:
+            vm_configs = create_topology_vms(topology_type, config, created_networks)
             
-            vm_id = create_slice_vm_with_networks(vm_config, vm_networks, headers, slice_id)
-            if vm_id:
-                vm_ids.append(vm_id)
-            else:
-                logger.warning(f"Error creando VM {vm_config['name']}")
+            for vm_config in vm_configs:
+                # Determinar a qué redes conectar la VM según la topología
+                vm_networks = get_vm_networks_for_topology(topology_type, vm_config, created_networks, public_network_id)
+                
+                vm_id = create_slice_vm_with_networks(vm_config, vm_networks, headers, slice_id)
+                if vm_id:
+                    vm_ids.append(vm_id)
+                else:
+                    logger.warning(f"Error creando VM {vm_config['name']}")
+        except Exception as e:
+            logger.error(f"Error creating VMs with topology: {e}")
+            # Fallback a creación simple usando la función original
+            for vm_config in config.get('vms', []):
+                vm_id = create_slice_vm(vm_config, primary_network_id, public_network_id, headers, slice_id)
+                if vm_id:
+                    vm_ids.append(vm_id)
+                else:
+                    logger.warning(f"Error creando VM {vm_config['name']}")
         
         if len(vm_ids) > 0:
             logger.info(f"Slice {slice_id} created successfully with {topology_type} topology: {len(vm_ids)} VMs, {len(created_networks)} networks, router")
@@ -1308,8 +1342,14 @@ def create_slice_vm_with_networks(vm_config, vm_networks, headers, slice_id):
 def create_topology_networks(topology_type, config, slice_id):
     """Crear configuración de redes específica según topología"""
     networks = []
-    base_name = config['network']['name']
-    base_cidr = config['network']['cidr']
+    # Extraer información de red del config
+    if 'network' in config and isinstance(config['network'], dict):
+        base_name = config['network']['name']
+        base_cidr = config['network']['cidr']
+    else:
+        # Fallback para el formato actual
+        base_name = slice_id[:8] + "-net"
+        base_cidr = "192.168.100.0/24"
     
     if topology_type == 'linear':
         # Red única para comunicación secuencial
@@ -1370,14 +1410,27 @@ def create_topology_vms(topology_type, config, networks):
     node_count = config['node_count']
     
     for i in range(node_count):
-        vm_config = {
-            'name': config['vms'][i]['name'],
-            'image_id': config['vms'][i]['image_id'],
-            'flavor_id': config['vms'][i]['flavor_id'],
-            'number': i + 1,
-            'cloud_init': config['vms'][i].get('cloud_init', ''),
-            'topology_role': get_topology_role(topology_type, i, node_count)
-        }
+        # Usar la lista de VMs si existe, sino crear configuración básica
+        if 'vms' in config and len(config['vms']) > i:
+            vm_base = config['vms'][i]
+            vm_config = {
+                'name': vm_base['name'],
+                'image_id': vm_base['image_id'],
+                'flavor_id': vm_base['flavor_id'],
+                'number': i + 1,
+                'cloud_init': vm_base.get('cloud_init', ''),
+                'topology_role': get_topology_role(topology_type, i, node_count)
+            }
+        else:
+            # Crear configuración básica
+            vm_config = {
+                'name': f"{config.get('slice_id', 'slice')[:8]}-vm-{i+1}",
+                'image_id': config.get('image_id', 'ubuntu-20.04'),
+                'flavor_id': config.get('flavor_id', 'm1.small'),
+                'number': i + 1,
+                'cloud_init': config.get('cloud_init', ''),
+                'topology_role': get_topology_role(topology_type, i, node_count)
+            }
         vms.append(vm_config)
     
     return vms
@@ -2142,6 +2195,52 @@ def test_endpoint():
         'message': 'Test endpoint working',
         'timestamp': datetime.now().isoformat()
     })
+
+@app.route('/api/debug/slice-config', methods=['POST'])
+@login_required
+def debug_slice_config():
+    """Debug endpoint para revisar configuración de slice"""
+    try:
+        data = request.get_json()
+        logger.info(f"Debug slice config: {data}")
+        
+        # Validar datos básicos
+        validation_errors = []
+        required_fields = ['name', 'topology_type', 'node_count', 'flavor', 'image', 'network_name', 'network_cidr']
+        for field in required_fields:
+            if not data.get(field):
+                validation_errors.append(f'Campo requerido faltante: {field}')
+        
+        # Verificar credenciales OpenStack
+        credentials = get_user_openstack_credentials()
+        has_credentials = credentials is not None
+        
+        # Verificar token
+        token = None
+        if has_credentials:
+            token = get_openstack_token()
+        
+        debug_info = {
+            'received_data': data,
+            'validation_errors': validation_errors,
+            'has_openstack_credentials': has_credentials,
+            'has_openstack_token': token is not None,
+            'user_id': session['user']['id'],
+            'user_name': session['user']['username']
+        }
+        
+        return jsonify({
+            'success': True,
+            'debug_info': debug_info
+        })
+        
+    except Exception as e:
+        import traceback
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'traceback': traceback.format_exc()
+        }), 500
 
 @app.route('/api/openstack/public-networks')
 @login_required

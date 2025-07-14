@@ -187,6 +187,9 @@
                     <button type="button" class="btn btn-outline-primary" id="previewSlice">
                         <i class="fas fa-eye"></i> Vista Previa
                     </button>
+                    <button type="button" class="btn btn-outline-warning" id="debugSlice">
+                        <i class="fas fa-bug"></i> Debug
+                    </button>
                     <a href="{{ url_for('list_slices') }}" class="btn btn-secondary">
                         <i class="fas fa-times"></i> Cancelar
                     </a>
@@ -353,6 +356,12 @@ $(document).ready(function() {
         e.preventDefault();
         showSlicePreview();
     });
+    
+    // Debug button
+    $('#debugSlice').on('click', function(e) {
+        e.preventDefault();
+        debugSliceConfig();
+    });
 });
 
 function submitSliceForm() {
@@ -414,14 +423,23 @@ function submitSliceForm() {
             let errorMessage = 'Error de conexión';
             if (xhr.responseJSON && xhr.responseJSON.error) {
                 errorMessage = xhr.responseJSON.error;
+                // Si hay detalles técnicos, mostrarlos en consola
+                if (xhr.responseJSON.details) {
+                    console.error('Error details:', xhr.responseJSON.details);
+                }
             } else if (xhr.responseText) {
                 try {
                     const errorData = JSON.parse(xhr.responseText);
                     errorMessage = errorData.error || errorMessage;
+                    if (errorData.details) {
+                        console.error('Error details:', errorData.details);
+                    }
                 } catch (e) {
                     errorMessage = xhr.responseText;
                 }
             }
+            
+            console.error('Full error response:', xhr);
             
             showSimpleAlert('error', errorMessage);
         }
@@ -483,9 +501,64 @@ function hideProgressModal() {
     $('#progressModal').modal('hide');
 }
 
+function debugSliceConfig() {
+    console.log('🐛 Running slice debug...');
+    
+    // Get form data
+    const formData = {
+        name: $('#sliceName').val().trim(),
+        description: $('#description').val().trim(),
+        topology_type: $('#topologyType').val(),
+        node_count: parseInt($('#nodeCount').val()) || 3,
+        flavor: $('#vmFlavor').val(),
+        image: $('#vmImage').val(),
+        network_name: $('#sliceNetworkName').val().trim(),
+        network_cidr: $('#sliceNetworkCidr').val().trim(),
+        enable_dhcp: $('#enableDHCP').is(':checked'),
+        vm_prefix: $('#vmNamePrefix').val().trim(),
+        cloud_init: $('#cloudInitScript').val().trim()
+    };
+    
+    console.log('📋 Debug form data:', formData);
+    
+    // Send to debug endpoint
+    $.ajax({
+        url: '/api/debug/slice-config',
+        method: 'POST',
+        contentType: 'application/json',
+        data: JSON.stringify(formData),
+        success: function(response) {
+            console.log('✅ Debug response:', response);
+            
+            if (response.success) {
+                const debugInfo = response.debug_info;
+                let message = `Debug Info:\\n`;
+                message += `- Usuario: ${debugInfo.user_name} (ID: ${debugInfo.user_id})\\n`;
+                message += `- Credenciales OpenStack: ${debugInfo.has_openstack_credentials ? '✅' : '❌'}\\n`;
+                message += `- Token OpenStack: ${debugInfo.has_openstack_token ? '✅' : '❌'}\\n`;
+                message += `- Errores de validación: ${debugInfo.validation_errors.length}\\n`;
+                
+                if (debugInfo.validation_errors.length > 0) {
+                    message += `\\nErrores encontrados:\\n`;
+                    debugInfo.validation_errors.forEach(error => {
+                        message += `- ${error}\\n`;
+                    });
+                }
+                
+                alert(message);
+                showSimpleAlert('info', 'Debug completado - ver consola para detalles');
+            }
+        },
+        error: function(xhr, status, error) {
+            console.error('❌ Debug error:', xhr);
+            showSimpleAlert('error', 'Error en debug: ' + error);
+        }
+    });
+}
+
 function showSimpleAlert(type, message) {
-    const alertClass = type === 'error' ? 'alert-danger' : 'alert-success';
-    const icon = type === 'error' ? 'fa-exclamation-triangle' : 'fa-check-circle';
+    const alertClass = type === 'error' ? 'alert-danger' : (type === 'info' ? 'alert-info' : 'alert-success');
+    const icon = type === 'error' ? 'fa-exclamation-triangle' : (type === 'info' ? 'fa-info-circle' : 'fa-check-circle');
     
     const alert = $(`
         <div class="alert ${alertClass} alert-dismissible fade show" role="alert">
