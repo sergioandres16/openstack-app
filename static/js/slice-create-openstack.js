@@ -12,8 +12,21 @@ $(document).ready(function() {
     console.log('vmImage element:', $('#vmImage').length);
     console.log('toggleCloudInit element:', $('#toggleCloudInit').length);
     
-    // Inicializar carga de datos de OpenStack
-    loadOpenStackData();
+    // TEST: Poblar directamente para verificar que funciona
+    console.log('===== TESTING DIRECT POPULATE =====');
+    testDirectPopulate();
+    
+    // TEST: Verificar conectividad con API
+    setTimeout(function() {
+        console.log('===== TESTING API CONNECTIVITY =====');
+        testAPIConnectivity();
+    }, 1000);
+    
+    // Después de 3 segundos, intentar cargar desde API
+    setTimeout(function() {
+        console.log('===== STARTING API LOAD =====');
+        loadOpenStackData();
+    }, 3000);
     
     // Event listeners
     $('#vmFlavor').change(updateFlavorDetails);
@@ -63,6 +76,117 @@ function loadOpenStackData() {
         
         // Forzar el populate con datos por defecto si todo falla
         forcePopulateDefaults();
+    });
+}
+
+function testDirectPopulate() {
+    console.log('===== DIRECT POPULATE TEST =====');
+    
+    // Verificar que los elementos estén disponibles
+    const flavorSelect = $('#vmFlavor');
+    const imageSelect = $('#vmImage');
+    
+    console.log('Flavor select exists:', flavorSelect.length > 0);
+    console.log('Image select exists:', imageSelect.length > 0);
+    
+    if (flavorSelect.length === 0) {
+        console.error('PROBLEMA: Elemento #vmFlavor no encontrado!');
+        return;
+    }
+    
+    if (imageSelect.length === 0) {
+        console.error('PROBLEMA: Elemento #vmImage no encontrado!');
+        return;
+    }
+    
+    // Poblar directamente sin AJAX
+    console.log('Poblando flavors directamente...');
+    flavorSelect.empty();
+    flavorSelect.append('<option value="">Seleccione un flavor...</option>');
+    flavorSelect.append('<option value="test-1">TEST Flavor 1 - 1 vCPU, 1GB RAM</option>');
+    flavorSelect.append('<option value="test-2">TEST Flavor 2 - 2 vCPU, 2GB RAM</option>');
+    
+    console.log('Poblando imágenes directamente...');
+    imageSelect.empty();
+    imageSelect.append('<option value="">Seleccione una imagen...</option>');
+    imageSelect.append('<option value="test-ubuntu">TEST Ubuntu 20.04</option>');
+    imageSelect.append('<option value="test-centos">TEST CentOS 8</option>');
+    
+    console.log('Flavor options after direct populate:', flavorSelect.find('option').length);
+    console.log('Image options after direct populate:', imageSelect.find('option').length);
+    
+    console.log('===== DIRECT POPULATE TEST COMPLETED =====');
+}
+
+function testAPIConnectivity() {
+    console.log('===== TESTING API CONNECTIVITY =====');
+    
+    // Test endpoint simple
+    $.ajax({
+        url: '/api/test',
+        method: 'GET',
+        timeout: 5000,
+        success: function(response) {
+            console.log('✅ API Test successful:', response);
+            
+            // Si el test funciona, probar flavors
+            testFlavorEndpoint();
+        },
+        error: function(xhr, status, error) {
+            console.error('❌ API Test failed:', xhr, status, error);
+            console.error('Response text:', xhr.responseText);
+        }
+    });
+}
+
+function testFlavorEndpoint() {
+    console.log('===== TESTING FLAVOR ENDPOINT =====');
+    
+    $.ajax({
+        url: '/api/openstack/flavors',
+        method: 'GET',
+        timeout: 5000,
+        success: function(response) {
+            console.log('✅ Flavors endpoint successful:', response);
+            
+            if (response && response.success && response.flavors) {
+                console.log('Flavors data received:', response.flavors);
+                console.log('Number of flavors:', response.flavors.length);
+            } else {
+                console.error('❌ Invalid flavors response structure');
+            }
+            
+            // Probar images
+            testImageEndpoint();
+        },
+        error: function(xhr, status, error) {
+            console.error('❌ Flavors endpoint failed:', xhr, status, error);
+            console.error('Response text:', xhr.responseText);
+        }
+    });
+}
+
+function testImageEndpoint() {
+    console.log('===== TESTING IMAGE ENDPOINT =====');
+    
+    $.ajax({
+        url: '/api/openstack/images',
+        method: 'GET',
+        timeout: 5000,
+        success: function(response) {
+            console.log('✅ Images endpoint successful:', response);
+            
+            if (response && response.success && response.images) {
+                console.log('Images data received:', response.images);
+                console.log('Number of images:', response.images.length);
+            } else {
+                console.error('❌ Invalid images response structure');
+            }
+        },
+        error: function(xhr, status, error) {
+            console.error('❌ Images endpoint failed:', xhr, status, error);
+            console.error('Response text:', xhr.responseText);
+        }
     });
 }
 
