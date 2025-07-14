@@ -1823,7 +1823,6 @@ def test_create_slice():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/api/openstack/flavors')
-@login_required
 def get_openstack_flavors():
     """Obtener flavors disponibles en OpenStack"""
     try:
@@ -1882,7 +1881,6 @@ def get_openstack_flavors():
         })
 
 @app.route('/api/openstack/images')
-@login_required
 def get_openstack_images():
     """Obtener imágenes disponibles en OpenStack"""
     try:

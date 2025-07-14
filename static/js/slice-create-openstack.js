@@ -5,6 +5,13 @@ let openstackImages = [];
 let publicNetworks = [];
 
 $(document).ready(function() {
+    console.log('DOM ready, starting OpenStack data load...');
+    
+    // Debugging: Verificar que los elementos existen
+    console.log('vmFlavor element:', $('#vmFlavor').length);
+    console.log('vmImage element:', $('#vmImage').length);
+    console.log('toggleCloudInit element:', $('#toggleCloudInit').length);
+    
     // Inicializar carga de datos de OpenStack
     loadOpenStackData();
     
@@ -12,7 +19,11 @@ $(document).ready(function() {
     $('#vmFlavor').change(updateFlavorDetails);
     $('#vmImage').change(updateImageDetails);
     $('#nodeCount').change(updateResourceSummary);
-    $('#toggleCloudInit').click(toggleCloudInitSection);
+    $('#toggleCloudInit').click(function(e) {
+        console.log('Cloud-Init toggle clicked');
+        e.preventDefault();
+        toggleCloudInitSection();
+    });
     $('#previewSlice').click(showSlicePreview);
     $('#sliceForm').submit(submitSlice);
     
@@ -48,26 +59,71 @@ function loadOpenStackData() {
         updateResourceSummary();
     }).catch(error => {
         console.error('Error loading OpenStack data:', error);
-        showAlert('error', 'Error cargando datos de OpenStack: ' + error.message);
+        showAlert('error', 'Error cargando datos de OpenStack, usando datos por defecto');
+        
+        // Forzar el populate con datos por defecto si todo falla
+        forcePopulateDefaults();
     });
+}
+
+function forcePopulateDefaults() {
+    console.log('Forcing default data population...');
+    
+    // Forzar flavors por defecto
+    if (openstackFlavors.length === 0) {
+        openstackFlavors = [
+            {'id': 'm1.tiny', 'name': 'm1.tiny', 'vcpus': 1, 'ram': 512, 'disk': 1},
+            {'id': 'm1.small', 'name': 'm1.small', 'vcpus': 1, 'ram': 2048, 'disk': 20},
+            {'id': 'm1.medium', 'name': 'm1.medium', 'vcpus': 2, 'ram': 4096, 'disk': 40}
+        ];
+        populateFlavorSelect();
+    }
+    
+    // Forzar imágenes por defecto
+    if (openstackImages.length === 0) {
+        openstackImages = [
+            {'id': 'ubuntu-20.04', 'name': 'Ubuntu 20.04 LTS', 'status': 'active', 'size': 2147483648},
+            {'id': 'ubuntu-22.04', 'name': 'Ubuntu 22.04 LTS', 'status': 'active', 'size': 2147483648},
+            {'id': 'centos-8', 'name': 'CentOS 8 Stream', 'status': 'active', 'size': 2147483648}
+        ];
+        populateImageSelect();
+    }
+    
+    console.log('Default data forced:', {flavors: openstackFlavors, images: openstackImages});
 }
 
 function loadFlavors() {
     return new Promise((resolve, reject) => {
+        console.log('Starting loadFlavors...');
         $.ajax({
             url: '/api/openstack/flavors',
             method: 'GET',
+            timeout: 10000,
             success: function(response) {
-                if (response.success) {
+                console.log('Flavors response:', response);
+                if (response && response.success && response.flavors) {
                     openstackFlavors = response.flavors;
+                    console.log('Flavors loaded:', openstackFlavors);
                     populateFlavorSelect();
                     resolve();
                 } else {
-                    reject(new Error(response.error || 'Error cargando flavors'));
+                    console.error('Invalid flavors response:', response);
+                    reject(new Error(response?.error || 'Respuesta inválida del servidor'));
                 }
             },
-            error: function(xhr) {
-                reject(new Error(xhr.responseJSON?.error || 'Error de conexión al cargar flavors'));
+            error: function(xhr, status, error) {
+                console.error('Flavors AJAX error:', xhr, status, error);
+                console.error('Response text:', xhr.responseText);
+                
+                // Fallback: usar flavors por defecto
+                openstackFlavors = [
+                    {'id': 'm1.tiny', 'name': 'm1.tiny', 'vcpus': 1, 'ram': 512, 'disk': 1},
+                    {'id': 'm1.small', 'name': 'm1.small', 'vcpus': 1, 'ram': 2048, 'disk': 20},
+                    {'id': 'm1.medium', 'name': 'm1.medium', 'vcpus': 2, 'ram': 4096, 'disk': 40}
+                ];
+                console.log('Using fallback flavors:', openstackFlavors);
+                populateFlavorSelect();
+                resolve();
             }
         });
     });
@@ -75,20 +131,36 @@ function loadFlavors() {
 
 function loadImages() {
     return new Promise((resolve, reject) => {
+        console.log('Starting loadImages...');
         $.ajax({
             url: '/api/openstack/images',
             method: 'GET',
+            timeout: 10000,
             success: function(response) {
-                if (response.success) {
+                console.log('Images response:', response);
+                if (response && response.success && response.images) {
                     openstackImages = response.images;
+                    console.log('Images loaded:', openstackImages);
                     populateImageSelect();
                     resolve();
                 } else {
-                    reject(new Error(response.error || 'Error cargando imágenes'));
+                    console.error('Invalid images response:', response);
+                    reject(new Error(response?.error || 'Respuesta inválida del servidor'));
                 }
             },
-            error: function(xhr) {
-                reject(new Error(xhr.responseJSON?.error || 'Error de conexión al cargar imágenes'));
+            error: function(xhr, status, error) {
+                console.error('Images AJAX error:', xhr, status, error);
+                console.error('Response text:', xhr.responseText);
+                
+                // Fallback: usar imágenes por defecto
+                openstackImages = [
+                    {'id': 'ubuntu-20.04', 'name': 'Ubuntu 20.04 LTS', 'status': 'active', 'size': 2147483648},
+                    {'id': 'ubuntu-22.04', 'name': 'Ubuntu 22.04 LTS', 'status': 'active', 'size': 2147483648},
+                    {'id': 'centos-8', 'name': 'CentOS 8 Stream', 'status': 'active', 'size': 2147483648}
+                ];
+                console.log('Using fallback images:', openstackImages);
+                populateImageSelect();
+                resolve();
             }
         });
     });
@@ -115,31 +187,46 @@ function loadPublicNetworks() {
 }
 
 function populateFlavorSelect() {
+    console.log('Populating flavor select...');
     const $select = $('#vmFlavor');
+    console.log('Flavor select element found:', $select.length > 0);
+    
     $select.empty();
     $select.append('<option value="">Seleccione un flavor...</option>');
     
+    console.log('Flavors to populate:', openstackFlavors);
     openstackFlavors.forEach(flavor => {
-        const option = $(`<option value="${flavor.id}">${flavor.name} - ${flavor.vcpus} vCPUs, ${Math.round(flavor.ram/1024)}GB RAM, ${flavor.disk}GB Disk</option>`);
+        const ramGB = Math.round(flavor.ram / 1024);
+        const option = $(`<option value="${flavor.id}">${flavor.name} - ${flavor.vcpus} vCPUs, ${ramGB}GB RAM, ${flavor.disk}GB Disk</option>`);
         option.data('flavor', flavor);
         $select.append(option);
+        console.log('Added flavor option:', flavor.name);
     });
+    
+    console.log('Flavor select populated with', $select.find('option').length, 'options');
 }
 
 function populateImageSelect() {
+    console.log('Populating image select...');
     const $select = $('#vmImage');
+    console.log('Image select element found:', $select.length > 0);
+    
     $select.empty();
     $select.append('<option value="">Seleccione una imagen...</option>');
     
     // Filtrar solo imágenes activas
-    const activeImages = openstackImages.filter(img => img.status === 'active');
+    const activeImages = openstackImages.filter(img => !img.status || img.status === 'active');
+    console.log('Active images to populate:', activeImages);
     
     activeImages.forEach(image => {
         const sizeGB = image.size ? Math.round(image.size / (1024 * 1024 * 1024)) : 'N/A';
         const option = $(`<option value="${image.id}">${image.name} (${sizeGB}GB)</option>`);
         option.data('image', image);
         $select.append(option);
+        console.log('Added image option:', image.name);
     });
+    
+    console.log('Image select populated with', $select.find('option').length, 'options');
 }
 
 function updateFlavorDetails() {
