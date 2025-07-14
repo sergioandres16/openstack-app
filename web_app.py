@@ -901,7 +901,9 @@ def create_slice():
     """Crear nuevo slice de OpenStack con VMs reales"""
     try:
         data = request.get_json()
-        logger.info(f"Creating OpenStack slice with data: {data}")
+        logger.info("=== SLICE CREATION START ===")
+        logger.info(f"User: {session['user']['username']} (ID: {session['user']['id']})")
+        logger.info(f"Data received: {data}")
         
         # Validar datos requeridos
         required_fields = ['name', 'topology_type', 'node_count', 'flavor', 'image', 'network_name', 'network_cidr']
@@ -978,7 +980,15 @@ def create_slice():
         
         # Crear recursos en OpenStack
         logger.info(f"Creating OpenStack resources for slice {slice_id}")
-        success = create_openstack_slice(slice_id, slice_config, credentials)
+        logger.info(f"Slice config structure: {slice_config}")
+        # Intentar primero con la nueva función, sino usar fallback
+        logger.info("Attempting to create slice with topology-aware function...")
+        try:
+            success = create_openstack_slice(slice_id, slice_config, credentials)
+        except Exception as e:
+            logger.warning(f"Topology-aware creation failed: {e}")
+            logger.info("Falling back to simple slice creation...")
+            success = create_simple_openstack_slice(slice_id, slice_config, credentials)
         
         if success:
             # Actualizar estado del slice
@@ -1503,6 +1513,89 @@ def create_slice_vm(vm_config, private_network_id, public_network_id, headers, s
         {"uuid": public_network_id}
     ]
     return create_slice_vm_with_networks(vm_config, vm_networks, headers, slice_id)
+
+def create_simple_openstack_slice(slice_id, config, credentials):
+    """Crear slice simple en OpenStack - función de fallback"""
+    try:
+        logger.info(f"Creating simple slice {slice_id}")
+        
+        # Obtener token de autenticación
+        auth_data = {
+            "auth": {
+                "identity": {
+                    "methods": ["password"],
+                    "password": {
+                        "user": {
+                            "name": credentials['username'],
+                            "domain": {"name": credentials['user_domain_name']},
+                            "password": credentials['password']
+                        }
+                    }
+                },
+                "scope": {
+                    "project": {
+                        "name": credentials['project_name'],
+                        "domain": {"name": credentials['project_domain_name']}
+                    }
+                }
+            }
+        }
+        
+        response = requests.post(
+            f"{credentials['auth_url']}/auth/tokens",
+            json=auth_data,
+            headers={'Content-Type': 'application/json'},
+            timeout=30
+        )
+        
+        if response.status_code != 201:
+            logger.error(f"Failed to authenticate with OpenStack: {response.status_code}")
+            return False
+        
+        token = response.headers.get('X-Subject-Token')
+        headers = {
+            'X-Auth-Token': token,
+            'Content-Type': 'application/json'
+        }
+        
+        # Paso 1: Obtener red pública
+        public_network_id = get_public_network_id(headers)
+        if not public_network_id:
+            logger.error("No se encontró red pública disponible")
+            return False
+        
+        # Paso 2: Crear red privada simple
+        network_config = config['network']
+        private_network_id = create_slice_network(network_config, headers, slice_id)
+        if not private_network_id:
+            logger.error("Error creando red privada del slice")
+            return False
+        
+        # Paso 3: Crear router
+        router_id = create_slice_router(slice_id, private_network_id, public_network_id, headers)
+        if not router_id:
+            logger.error("Error creando router del slice")
+            return False
+        
+        # Paso 4: Crear VMs simples
+        vm_ids = []
+        for vm_config in config['vms']:
+            vm_id = create_slice_vm(vm_config, private_network_id, public_network_id, headers, slice_id)
+            if vm_id:
+                vm_ids.append(vm_id)
+            else:
+                logger.warning(f"Error creando VM {vm_config['name']}")
+        
+        if len(vm_ids) > 0:
+            logger.info(f"Simple slice {slice_id} created successfully: {len(vm_ids)} VMs")
+            return True
+        else:
+            logger.error(f"No se pudo crear ninguna VM para el slice {slice_id}")
+            return False
+        
+    except Exception as e:
+        logger.error(f"Error creating simple OpenStack slice: {e}")
+        return False
 
 def create_network_in_openstack(network_config, headers, credentials, slice_id):
     """Crea una red en OpenStack"""
