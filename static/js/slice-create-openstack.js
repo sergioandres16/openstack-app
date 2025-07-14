@@ -34,6 +34,7 @@ $(document).ready(function() {
 });
 
 function loadOpenStackData() {
+    console.log('Loading OpenStack data...');
     showAlert('info', 'Cargando datos de OpenStack...');
     
     // Cargar flavors, imágenes y redes en paralelo
@@ -42,6 +43,7 @@ function loadOpenStackData() {
         loadImages(),
         loadPublicNetworks()
     ]).then(() => {
+        console.log('All OpenStack data loaded successfully');
         showAlert('success', 'Datos de OpenStack cargados correctamente');
         updateResourceSummary();
     }).catch(error => {

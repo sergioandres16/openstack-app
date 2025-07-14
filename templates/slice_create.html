@@ -242,6 +242,7 @@
     align-items: center;
     padding: 8px 0;
     border-bottom: 1px solid rgba(255,255,255,0.2);
+    color: white;
 }
 
 .resource-item:last-child {
@@ -251,6 +252,43 @@
 .form-check-input:checked {
     background-color: #0d6efd;
     border-color: #0d6efd;
+}
+
+/* Corregir contraste de texto */
+.card-body .form-text {
+    color: #6c757d !important;
+}
+
+.alert-info {
+    color: #0c5460 !important;
+    background-color: #d1ecf1 !important;
+    border-color: #bee5eb !important;
+}
+
+.alert-warning {
+    color: #856404 !important;
+    background-color: #fff3cd !important;
+    border-color: #ffeaa7 !important;
+}
+
+/* Asegurar que el texto sea visible en fondos claros */
+.bg-light, .card-body, .list-group-item {
+    color: #212529 !important;
+}
+
+.text-muted {
+    color: #6c757d !important;
+}
+
+/* Contraste para nombres de VMs y texto en vista previa */
+.list-group-item strong,
+.table td,
+.table th {
+    color: #212529 !important;
+}
+
+.small, .form-text {
+    color: #6c757d !important;
 }
 </style>
 

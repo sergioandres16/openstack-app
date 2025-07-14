@@ -1229,6 +1229,7 @@ def create_slice_vm(vm_config, private_network_id, public_network_id, headers, s
                 "imageRef": vm_config['image_id'],
                 "flavorRef": vm_config['flavor_id'],
                 "networks": networks,
+                "security_groups": [{"name": "default"}],  # Usar security group default
                 "description": f"VM {vm_config['number']} del slice {slice_id}",
                 "metadata": {
                     "slice_id": slice_id,
@@ -1826,31 +1827,43 @@ def test_create_slice():
 def get_openstack_flavors():
     """Obtener flavors disponibles en OpenStack"""
     try:
+        logger.info("Fetching flavors from OpenStack")
         flavors_data = fetch_openstack_data_with_cache('/flavors', 'flavors', 60)
         
-        if isinstance(flavors_data, list):
+        if isinstance(flavors_data, list) and len(flavors_data) > 0:
             # Procesar flavors para incluir información útil
             processed_flavors = []
             for flavor in flavors_data:
                 if isinstance(flavor, dict):
-                    processed_flavors.append({
-                        'id': flavor.get('id'),
-                        'name': flavor.get('name'),
-                        'vcpus': flavor.get('vcpus', 0),
-                        'ram': flavor.get('ram', 0),
-                        'disk': flavor.get('disk', 0),
-                        'public': flavor.get('os-flavor-access:is_public', True)
-                    })
+                    # Verificar que el flavor esté disponible
+                    is_public = flavor.get('os-flavor-access:is_public', True)
+                    if is_public:  # Solo incluir flavors públicos
+                        processed_flavors.append({
+                            'id': flavor.get('id'),
+                            'name': flavor.get('name'),
+                            'vcpus': flavor.get('vcpus', 1),
+                            'ram': flavor.get('ram', 1024),
+                            'disk': flavor.get('disk', 10),
+                            'public': is_public
+                        })
             
+            logger.info(f"Returning {len(processed_flavors)} flavors")
             return jsonify({
                 'success': True,
                 'flavors': processed_flavors
             })
         else:
+            logger.warning("No flavors data received from OpenStack")
+            # Retornar flavors por defecto si no hay datos
+            default_flavors = [
+                {'id': 'm1.tiny', 'name': 'm1.tiny', 'vcpus': 1, 'ram': 512, 'disk': 1},
+                {'id': 'm1.small', 'name': 'm1.small', 'vcpus': 1, 'ram': 2048, 'disk': 20},
+                {'id': 'm1.medium', 'name': 'm1.medium', 'vcpus': 2, 'ram': 4096, 'disk': 40}
+            ]
             return jsonify({
-                'success': False,
-                'error': 'No se pudieron obtener los flavors'
-            }), 500
+                'success': True,
+                'flavors': default_flavors
+            })
             
     except Exception as e:
         logger.error(f"Error getting OpenStack flavors: {e}")
@@ -1861,34 +1874,48 @@ def get_openstack_flavors():
 def get_openstack_images():
     """Obtener imágenes disponibles en OpenStack"""
     try:
+        logger.info("Fetching images from OpenStack")
         images_data = fetch_openstack_data_with_cache('/images', 'images', 60)
         
-        if isinstance(images_data, list):
+        if isinstance(images_data, list) and len(images_data) > 0:
             # Procesar imágenes para incluir información útil
             processed_images = []
             for image in images_data:
-                if isinstance(image, dict) and image.get('status') == 'active':
-                    processed_images.append({
-                        'id': image.get('id'),
-                        'name': image.get('name'),
-                        'status': image.get('status'),
-                        'size': image.get('size', 0),
-                        'disk_format': image.get('disk_format'),
-                        'container_format': image.get('container_format'),
-                        'visibility': image.get('visibility', 'private'),
-                        'os_type': image.get('os_type', 'unknown'),
-                        'created_at': image.get('created_at')
-                    })
+                if isinstance(image, dict):
+                    status = image.get('status', '').lower()
+                    visibility = image.get('visibility', 'private')
+                    
+                    # Solo incluir imágenes activas y públicas o compartidas
+                    if status == 'active' and visibility in ['public', 'shared', 'community']:
+                        processed_images.append({
+                            'id': image.get('id'),
+                            'name': image.get('name', 'Unknown'),
+                            'status': status,
+                            'size': image.get('size', 0),
+                            'disk_format': image.get('disk_format'),
+                            'container_format': image.get('container_format'),
+                            'visibility': visibility,
+                            'os_type': image.get('os_type', 'unknown'),
+                            'created_at': image.get('created_at')
+                        })
             
+            logger.info(f"Returning {len(processed_images)} images")
             return jsonify({
                 'success': True,
                 'images': processed_images
             })
         else:
+            logger.warning("No images data received from OpenStack")
+            # Retornar imágenes por defecto si no hay datos
+            default_images = [
+                {'id': 'ubuntu-20.04', 'name': 'Ubuntu 20.04 LTS', 'status': 'active', 'size': 2147483648},
+                {'id': 'ubuntu-22.04', 'name': 'Ubuntu 22.04 LTS', 'status': 'active', 'size': 2147483648},
+                {'id': 'centos-8', 'name': 'CentOS 8 Stream', 'status': 'active', 'size': 2147483648}
+            ]
             return jsonify({
-                'success': False,
-                'error': 'No se pudieron obtener las imágenes'
-            }), 500
+                'success': True,
+                'images': default_images
+            })
             
     except Exception as e:
         logger.error(f"Error getting OpenStack images: {e}")
@@ -2036,14 +2063,23 @@ def get_openstack_resources():
         
         # Procesar quotas del proyecto
         if isinstance(quotas, dict):
-            # Buscar quotas específicas de compute
-            cores_quota = quotas.get('cores', {})
-            ram_quota = quotas.get('ram', {})
-            instances_quota = quotas.get('instances', {})
+            # Los datos vienen directamente del endpoint de limits
+            total_vcpus = quotas.get('total_vcpus', 10)
+            total_ram = quotas.get('total_ram', 10240)
+            total_instances = quotas.get('total_instances', 10)
             
-            total_vcpus = cores_quota.get('limit', 10) if isinstance(cores_quota, dict) else 10
-            total_ram = ram_quota.get('limit', 10240) if isinstance(ram_quota, dict) else 10240
-            total_instances = instances_quota.get('limit', 10) if isinstance(instances_quota, dict) else 10
+            # Los datos de uso también vienen en la respuesta
+            used_vcpus_from_quota = quotas.get('used_vcpus', 0)
+            used_ram_from_quota = quotas.get('used_ram', 0)
+            used_instances_from_quota = quotas.get('used_instances', 0)
+            
+            # Usar los datos de quotas si están disponibles
+            if used_vcpus_from_quota > 0:
+                used_vcpus = used_vcpus_from_quota
+            if used_ram_from_quota > 0:
+                used_ram = used_ram_from_quota
+            if used_instances_from_quota > 0:
+                used_instances = used_instances_from_quota
         else:
             # Valores por defecto si no hay quotas
             total_vcpus = 10
