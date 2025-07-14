@@ -2474,6 +2474,113 @@ def get_public_networks():
         logger.error(f"Error getting public networks: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
+@app.route('/api/debug/slice-dry-run', methods=['POST'])
+@login_required
+def slice_dry_run():
+    """Simular creación de slice sin crear recursos reales"""
+    try:
+        data = request.get_json()
+        logger.info("=== SLICE DRY RUN START ===")
+        logger.info(f"User: {session['user']['username']} (ID: {session['user']['id']})")
+        logger.info(f"Data received: {data}")
+        
+        # Validar datos requeridos
+        required_fields = ['name', 'topology_type', 'node_count', 'flavor', 'image', 'network_name', 'network_cidr']
+        for field in required_fields:
+            if not data.get(field):
+                return jsonify({'success': False, 'error': f'Campo requerido: {field}'}), 400
+        
+        # Validar número de nodos
+        node_count = int(data.get('node_count', 0))
+        if node_count < 2 or node_count > 20:
+            return jsonify({'success': False, 'error': 'Número de VMs debe estar entre 2 y 20'}), 400
+        
+        # Obtener credenciales de OpenStack
+        credentials = get_user_openstack_credentials()
+        if not credentials:
+            return jsonify({
+                'success': False, 
+                'error': 'Configure las credenciales de OpenStack primero en Configuración'
+            }), 400
+        
+        # Generar ID único para el slice
+        slice_id = str(uuid.uuid4())
+        
+        # Preparar configuración del slice
+        vm_prefix = data.get('vm_prefix', data['name'].replace(' ', '-').lower())
+        
+        # Crear configuración de VMs para el slice
+        vms_config = []
+        for i in range(1, node_count + 1):
+            vm_name = f"{slice_id[:8]}-{vm_prefix}-{i}"
+            vms_config.append({
+                'name': vm_name,
+                'flavor_id': data['flavor'],
+                'image_id': data['image'],
+                'cloud_init': data.get('cloud_init', ''),
+                'number': i
+            })
+        
+        # Configuración de red del slice
+        network_config = {
+            'name': f"{slice_id[:8]}-{data['network_name']}",
+            'cidr': data['network_cidr'],
+            'enable_dhcp': data.get('enable_dhcp', True),
+            'description': f"Red privada para slice {data['name']}"
+        }
+        
+        slice_config = {
+            'slice_id': slice_id,
+            'topology_type': data['topology_type'],
+            'node_count': node_count,
+            'vms': vms_config,
+            'network': network_config,
+            'flavor_id': data['flavor'],
+            'image_id': data['image'],
+            'cloud_init': data.get('cloud_init', ''),
+            'created_at': datetime.utcnow().isoformat()
+        }
+        
+        logger.info(f"Generated slice config: {slice_config}")
+        
+        # Verificar que podemos crear la configuración de topología
+        try:
+            network_configs = create_topology_networks(data['topology_type'], slice_config, slice_id)
+            vm_configs = create_topology_vms(data['topology_type'], slice_config, [{'id': 'dummy', 'name': 'dummy', 'type': 'data'}])
+            
+            topology_test = {
+                'networks': network_configs,
+                'vms': vm_configs
+            }
+            logger.info(f"Topology test successful: {topology_test}")
+            
+        except Exception as e:
+            logger.warning(f"Topology test failed: {e}")
+            topology_test = {'error': str(e)}
+        
+        return jsonify({
+            'success': True,
+            'message': 'Dry run completed successfully',
+            'dry_run_results': {
+                'slice_id': slice_id,
+                'slice_config': slice_config,
+                'topology_test': topology_test,
+                'credentials_available': bool(credentials),
+                'validation_passed': True
+            }
+        })
+        
+    except Exception as e:
+        import traceback
+        error_details = traceback.format_exc()
+        logger.error(f"Dry run error: {e}")
+        logger.error(f"Full traceback: {error_details}")
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'traceback': error_details
+        }), 500
+
 @app.route('/resources')
 @login_required
 def system_resources():

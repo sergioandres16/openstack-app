@@ -193,6 +193,9 @@
                     <button type="button" class="btn btn-outline-info" id="testOpenStack">
                         <i class="fas fa-cloud"></i> Test OpenStack
                     </button>
+                    <button type="button" class="btn btn-outline-secondary" id="dryRunSlice">
+                        <i class="fas fa-play"></i> Dry Run
+                    </button>
                     <a href="{{ url_for('list_slices') }}" class="btn btn-secondary">
                         <i class="fas fa-times"></i> Cancelar
                     </a>
@@ -370,6 +373,12 @@ $(document).ready(function() {
     $('#testOpenStack').on('click', function(e) {
         e.preventDefault();
         testOpenStackConnection();
+    });
+    
+    // Dry Run button
+    $('#dryRunSlice').on('click', function(e) {
+        e.preventDefault();
+        dryRunSlice();
     });
 });
 
@@ -605,6 +614,75 @@ function testOpenStackConnection() {
         error: function(xhr, status, error) {
             console.error('❌ OpenStack test error:', xhr);
             let errorMessage = 'Error de conexión al probar OpenStack';
+            if (xhr.responseJSON && xhr.responseJSON.error) {
+                errorMessage = xhr.responseJSON.error;
+                if (xhr.responseJSON.traceback) {
+                    console.error('Error traceback:', xhr.responseJSON.traceback);
+                }
+            }
+            showSimpleAlert('error', errorMessage);
+        }
+    });
+}
+
+function dryRunSlice() {
+    console.log('🎭 Running slice dry run...');
+    
+    // Get form data (same as submit)
+    const formData = {
+        name: $('#sliceName').val().trim(),
+        description: $('#description').val().trim(),
+        topology_type: $('#topologyType').val(),
+        node_count: parseInt($('#nodeCount').val()) || 3,
+        flavor: $('#vmFlavor').val(),
+        image: $('#vmImage').val(),
+        network_name: $('#sliceNetworkName').val().trim(),
+        network_cidr: $('#sliceNetworkCidr').val().trim(),
+        enable_dhcp: $('#enableDHCP').is(':checked'),
+        vm_prefix: $('#vmNamePrefix').val().trim(),
+        cloud_init: $('#cloudInitScript').val().trim()
+    };
+    
+    console.log('🎭 Dry run data:', formData);
+    showSimpleAlert('info', 'Ejecutando simulación de creación...');
+    
+    $.ajax({
+        url: '/api/debug/slice-dry-run',
+        method: 'POST',
+        contentType: 'application/json',
+        data: JSON.stringify(formData),
+        timeout: 30000,
+        success: function(response) {
+            console.log('✅ Dry run response:', response);
+            
+            if (response.success) {
+                const results = response.dry_run_results;
+                console.log('📋 Slice config generated:', results.slice_config);
+                console.log('🏗️ Topology test:', results.topology_test);
+                
+                let message = `Dry Run Completado:\\n`;
+                message += `- Slice ID: ${results.slice_id}\\n`;
+                message += `- Topología: ${results.slice_config.topology_type}\\n`;
+                message += `- VMs configuradas: ${results.slice_config.vms.length}\\n`;
+                message += `- Red configurada: ${results.slice_config.network.name}\\n`;
+                
+                if (results.topology_test.error) {
+                    message += `\\n⚠️ Error en topología: ${results.topology_test.error}`;
+                } else {
+                    message += `\\n✅ Configuración de topología generada exitosamente`;
+                    message += `\\n- Redes a crear: ${results.topology_test.networks ? results.topology_test.networks.length : 0}`;
+                    message += `\\n- VMs configuradas: ${results.topology_test.vms ? results.topology_test.vms.length : 0}`;
+                }
+                
+                alert(message);
+                showSimpleAlert('success', 'Dry run completado - el slice se puede crear');
+            } else {
+                showSimpleAlert('error', 'Error en dry run: ' + response.error);
+            }
+        },
+        error: function(xhr, status, error) {
+            console.error('❌ Dry run error:', xhr);
+            let errorMessage = 'Error en simulación';
             if (xhr.responseJSON && xhr.responseJSON.error) {
                 errorMessage = xhr.responseJSON.error;
                 if (xhr.responseJSON.traceback) {
