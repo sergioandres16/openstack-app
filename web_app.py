@@ -981,23 +981,9 @@ def create_slice():
         # Crear recursos en OpenStack
         logger.info(f"Creating OpenStack resources for slice {slice_id}")
         logger.info(f"Slice config structure: {slice_config}")
-        # Intentar primero con la nueva función, sino usar fallback
-        logger.info("Attempting to create slice with topology-aware function...")
-        try:
-            success = create_openstack_slice(slice_id, slice_config, credentials)
-            logger.info(f"Topology-aware creation result: {success}")
-        except Exception as e:
-            import traceback
-            logger.warning(f"Topology-aware creation failed: {e}")
-            logger.warning(f"Topology-aware creation traceback: {traceback.format_exc()}")
-            logger.info("Falling back to simple slice creation...")
-            try:
-                success = create_simple_openstack_slice(slice_id, slice_config, credentials)
-                logger.info(f"Simple creation result: {success}")
-            except Exception as e2:
-                logger.error(f"Simple creation also failed: {e2}")
-                logger.error(f"Simple creation traceback: {traceback.format_exc()}")
-                success = False
+        # Usar directamente la versión ultra-simple que sabemos que funciona
+        logger.info("Creating slice with ultra-simple method...")
+        success = create_ultra_simple_slice(slice_id, slice_config, credentials)
         
         if success:
             # Actualizar estado del slice
@@ -2717,6 +2703,208 @@ def test_openstack_create():
             'error': str(e),
             'traceback': error_details
         }), 500
+
+def create_ultra_simple_slice(slice_id, config, credentials):
+    """Crear slice usando exactamente la misma lógica que el test exitoso"""
+    try:
+        logger.info(f"=== ULTRA SIMPLE SLICE CREATION START ===")
+        logger.info(f"Slice ID: {slice_id}")
+        logger.info(f"Config: {config}")
+        
+        # Paso 1: Autenticación (igual que el test exitoso)
+        auth_data = {
+            "auth": {
+                "identity": {
+                    "methods": ["password"],
+                    "password": {
+                        "user": {
+                            "name": credentials['username'],
+                            "domain": {"name": credentials['user_domain_name']},
+                            "password": credentials['password']
+                        }
+                    }
+                },
+                "scope": {
+                    "project": {
+                        "name": credentials['project_name'],
+                        "domain": {"name": credentials['project_domain_name']}
+                    }
+                }
+            }
+        }
+        
+        response = requests.post(
+            f"{credentials['auth_url']}/auth/tokens",
+            json=auth_data,
+            headers={'Content-Type': 'application/json'},
+            timeout=30
+        )
+        
+        if response.status_code != 201:
+            logger.error(f"Auth failed: {response.status_code}")
+            return False
+        
+        token = response.headers.get('X-Subject-Token')
+        headers = {
+            'X-Auth-Token': token,
+            'Content-Type': 'application/json'
+        }
+        logger.info("✅ Authentication successful")
+        
+        # Paso 2: Buscar red pública (igual que el test exitoso)
+        logger.info("Finding public network...")
+        public_network_id = get_public_network_id(headers)
+        if not public_network_id:
+            logger.error("❌ No public network found")
+            return False
+        logger.info(f"✅ Public network found: {public_network_id}")
+        
+        # Paso 3: Crear red privada (igual que el test exitoso)
+        logger.info("Creating private network...")
+        network_config = config['network']
+        
+        # Usar exactamente la misma función que funcionó en el test
+        network_data = {
+            "network": {
+                "name": network_config['name'],
+                "admin_state_up": True,
+                "description": network_config['description']
+            }
+        }
+        
+        network_response = requests.post(
+            f"http://localhost:{OPENSTACK_SERVICE_PORTS['neutron']['local']}/v2.0/networks",
+            json=network_data,
+            headers=headers,
+            timeout=30
+        )
+        
+        if network_response.status_code != 201:
+            logger.error(f"❌ Network creation failed: {network_response.status_code}")
+            return False
+        
+        network = network_response.json()['network']
+        private_network_id = network['id']
+        logger.info(f"✅ Private network created: {private_network_id}")
+        
+        # Crear subnet
+        subnet_data = {
+            "subnet": {
+                "name": f"{network_config['name']}-subnet",
+                "network_id": private_network_id,
+                "ip_version": 4,
+                "cidr": network_config['cidr'],
+                "enable_dhcp": network_config['enable_dhcp']
+            }
+        }
+        
+        subnet_response = requests.post(
+            f"http://localhost:{OPENSTACK_SERVICE_PORTS['neutron']['local']}/v2.0/subnets",
+            json=subnet_data,
+            headers=headers,
+            timeout=30
+        )
+        
+        if subnet_response.status_code != 201:
+            logger.error(f"❌ Subnet creation failed: {subnet_response.status_code}")
+            return False
+        logger.info("✅ Subnet created")
+        
+        # Paso 4: Crear router (simplificado)
+        logger.info("Creating router...")
+        router_data = {
+            "router": {
+                "name": f"{slice_id[:8]}-router",
+                "admin_state_up": True,
+                "external_gateway_info": {
+                    "network_id": public_network_id
+                }
+            }
+        }
+        
+        router_response = requests.post(
+            f"http://localhost:{OPENSTACK_SERVICE_PORTS['neutron']['local']}/v2.0/routers",
+            json=router_data,
+            headers=headers,
+            timeout=30
+        )
+        
+        if router_response.status_code != 201:
+            logger.error(f"❌ Router creation failed: {router_response.status_code}")
+            return False
+        
+        router = router_response.json()['router']
+        router_id = router['id']
+        logger.info(f"✅ Router created: {router_id}")
+        
+        # Conectar router a subnet
+        subnet_id = subnet_response.json()['subnet']['id']
+        interface_data = {"subnet_id": subnet_id}
+        
+        interface_response = requests.put(
+            f"http://localhost:{OPENSTACK_SERVICE_PORTS['neutron']['local']}/v2.0/routers/{router_id}/add_router_interface",
+            json=interface_data,
+            headers=headers,
+            timeout=30
+        )
+        
+        if interface_response.status_code != 200:
+            logger.error(f"❌ Router interface failed: {interface_response.status_code}")
+            return False
+        logger.info("✅ Router connected to subnet")
+        
+        # Paso 5: Crear VMs simplificadas
+        logger.info("Creating VMs...")
+        vm_count = 0
+        for vm_config in config['vms']:
+            logger.info(f"Creating VM: {vm_config['name']}")
+            
+            # Usar topología lineal simple: todas las VMs en ambas redes
+            networks = [
+                {"uuid": private_network_id},
+                {"uuid": public_network_id}
+            ]
+            
+            instance_data = {
+                "server": {
+                    "name": vm_config['name'],
+                    "imageRef": vm_config['image_id'],
+                    "flavorRef": vm_config['flavor_id'],
+                    "networks": networks,
+                    "security_groups": [{"name": "default"}],
+                    "description": f"VM for slice {slice_id}",
+                    "metadata": {
+                        "slice_id": slice_id,
+                        "topology": config.get('topology_type', 'linear')
+                    }
+                }
+            }
+            
+            vm_response = requests.post(
+                f"http://localhost:{OPENSTACK_SERVICE_PORTS['nova']['local']}/v2.1/servers",
+                json=instance_data,
+                headers=headers,
+                timeout=30
+            )
+            
+            if vm_response.status_code == 202:
+                vm_count += 1
+                logger.info(f"✅ VM {vm_config['name']} created")
+            else:
+                logger.warning(f"❌ VM {vm_config['name']} failed: {vm_response.status_code}")
+        
+        if vm_count > 0:
+            logger.info(f"=== SLICE CREATION SUCCESSFUL: {vm_count} VMs created ===")
+            return True
+        else:
+            logger.error("=== SLICE CREATION FAILED: No VMs created ===")
+            return False
+        
+    except Exception as e:
+        import traceback
+        logger.error(f"Ultra simple slice creation error: {e}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        return False
 
 @app.route('/resources')
 @login_required
