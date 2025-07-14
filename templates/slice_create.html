@@ -190,6 +190,9 @@
                     <button type="button" class="btn btn-outline-warning" id="debugSlice">
                         <i class="fas fa-bug"></i> Debug
                     </button>
+                    <button type="button" class="btn btn-outline-info" id="testOpenStack">
+                        <i class="fas fa-cloud"></i> Test OpenStack
+                    </button>
                     <a href="{{ url_for('list_slices') }}" class="btn btn-secondary">
                         <i class="fas fa-times"></i> Cancelar
                     </a>
@@ -361,6 +364,12 @@ $(document).ready(function() {
     $('#debugSlice').on('click', function(e) {
         e.preventDefault();
         debugSliceConfig();
+    });
+    
+    // Test OpenStack button
+    $('#testOpenStack').on('click', function(e) {
+        e.preventDefault();
+        testOpenStackConnection();
     });
 });
 
@@ -552,6 +561,57 @@ function debugSliceConfig() {
         error: function(xhr, status, error) {
             console.error('❌ Debug error:', xhr);
             showSimpleAlert('error', 'Error en debug: ' + error);
+        }
+    });
+}
+
+function testOpenStackConnection() {
+    console.log('☁️ Testing OpenStack connection...');
+    showSimpleAlert('info', 'Probando conexión con OpenStack...');
+    
+    $.ajax({
+        url: '/api/debug/openstack-test',
+        method: 'POST',
+        contentType: 'application/json',
+        data: JSON.stringify({}),
+        timeout: 30000, // 30 seconds
+        success: function(response) {
+            console.log('✅ OpenStack test response:', response);
+            
+            if (response.success) {
+                const results = response.test_results;
+                let message = `Resultados del Test OpenStack:\\n`;
+                message += `- Credenciales: ${results.credentials ? '✅' : '❌'}\\n`;
+                message += `- Token: ${results.token ? '✅' : '❌'}\\n`;
+                message += `- Nova API (Compute): ${results.nova_api ? '✅' : '❌'}\\n`;
+                message += `- Glance API (Images): ${results.glance_api ? '✅' : '❌'}\\n`;
+                message += `- Neutron API (Network): ${results.neutron_api ? '✅' : '❌'}\\n`;
+                message += `- Red Pública: ${results.public_network ? '✅' : '❌'}\\n`;
+                
+                if (results.details.public_network_id) {
+                    message += `\\nID de Red Pública: ${results.details.public_network_id}`;
+                }
+                
+                alert(message);
+                
+                const allPassed = results.credentials && results.token && results.nova_api && results.glance_api && results.neutron_api && results.public_network;
+                showSimpleAlert(allPassed ? 'success' : 'error', 
+                    allPassed ? 'Todas las APIs de OpenStack funcionan correctamente' : 'Hay problemas con algunas APIs de OpenStack'
+                );
+            } else {
+                showSimpleAlert('error', 'Error en test: ' + response.error);
+            }
+        },
+        error: function(xhr, status, error) {
+            console.error('❌ OpenStack test error:', xhr);
+            let errorMessage = 'Error de conexión al probar OpenStack';
+            if (xhr.responseJSON && xhr.responseJSON.error) {
+                errorMessage = xhr.responseJSON.error;
+                if (xhr.responseJSON.traceback) {
+                    console.error('Error traceback:', xhr.responseJSON.traceback);
+                }
+            }
+            showSimpleAlert('error', errorMessage);
         }
     });
 }

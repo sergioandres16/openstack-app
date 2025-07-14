@@ -15,7 +15,7 @@ import hashlib
 import uuid
 from datetime import datetime, timedelta
 from functools import wraps
-from microservicios.openstack_config_ssh import SSH_TUNNEL_CONFIG
+from microservicios.openstack_config_ssh import SSH_TUNNEL_CONFIG, OPENSTACK_SERVICE_PORTS
 
 # Configurar logging
 logging.basicConfig(level=logging.INFO)
@@ -1156,8 +1156,12 @@ def create_openstack_slice(slice_id, config, credentials):
 def get_public_network_id(headers):
     """Buscar red pública/externa disponible"""
     try:
+        # Usar configuración de túnel SSH
+        from microservicios.openstack_config_ssh import OPENSTACK_SERVICE_PORTS
+        neutron_port = OPENSTACK_SERVICE_PORTS['neutron']['local']
+        
         response = requests.get(
-            "http://localhost:15002/v2.0/networks?router:external=true",
+            f"http://localhost:{neutron_port}/v2.0/networks?router:external=true",
             headers=headers,
             timeout=30
         )
@@ -1185,8 +1189,12 @@ def create_slice_network(network_config, headers, slice_id):
             }
         }
         
+        # Usar configuración de túnel SSH
+        from microservicios.openstack_config_ssh import OPENSTACK_SERVICE_PORTS
+        neutron_port = OPENSTACK_SERVICE_PORTS['neutron']['local']
+        
         response = requests.post(
-            "http://localhost:15002/v2.0/networks",
+            f"http://localhost:{neutron_port}/v2.0/networks",
             json=network_data,
             headers=headers,
             timeout=30
@@ -1211,7 +1219,7 @@ def create_slice_network(network_config, headers, slice_id):
         }
         
         subnet_response = requests.post(
-            "http://localhost:15002/v2.0/subnets",
+            f"http://localhost:{neutron_port}/v2.0/subnets",
             json=subnet_data,
             headers=headers,
             timeout=30
@@ -1242,8 +1250,12 @@ def create_slice_router(slice_id, private_network_id, public_network_id, headers
             }
         }
         
+        # Usar configuración de túnel SSH  
+        from microservicios.openstack_config_ssh import OPENSTACK_SERVICE_PORTS
+        neutron_port = OPENSTACK_SERVICE_PORTS['neutron']['local']
+        
         response = requests.post(
-            "http://localhost:15002/v2.0/routers",
+            f"http://localhost:{neutron_port}/v2.0/routers",
             json=router_data,
             headers=headers,
             timeout=30
@@ -1258,7 +1270,7 @@ def create_slice_router(slice_id, private_network_id, public_network_id, headers
         
         # Obtener subnet de la red privada
         subnets_response = requests.get(
-            f"http://localhost:15002/v2.0/subnets?network_id={private_network_id}",
+            f"http://localhost:{neutron_port}/v2.0/subnets?network_id={private_network_id}",
             headers=headers,
             timeout=30
         )
@@ -1280,7 +1292,7 @@ def create_slice_router(slice_id, private_network_id, public_network_id, headers
         }
         
         interface_response = requests.put(
-            f"http://localhost:15002/v2.0/routers/{router_id}/add_router_interface",
+            f"http://localhost:{neutron_port}/v2.0/routers/{router_id}/add_router_interface",
             json=router_interface_data,
             headers=headers,
             timeout=30
@@ -1329,8 +1341,12 @@ def create_slice_vm_with_networks(vm_config, vm_networks, headers, slice_id):
         if user_data:
             instance_data["server"]["user_data"] = user_data
         
+        # Usar configuración de túnel SSH
+        from microservicios.openstack_config_ssh import OPENSTACK_SERVICE_PORTS
+        nova_port = OPENSTACK_SERVICE_PORTS['nova']['local']
+        
         response = requests.post(
-            "http://localhost:15001/v2.1/servers",
+            f"http://localhost:{nova_port}/v2.1/servers",
             json=instance_data,
             headers=headers,
             timeout=30
@@ -1610,7 +1626,7 @@ def create_network_in_openstack(network_config, headers, credentials, slice_id):
         
         # Crear red (usar puerto 15002 para Neutron según configuración SSH)
         network_response = requests.post(
-            f"http://localhost:15002/v2.0/networks",
+            f"http://localhost:{OPENSTACK_SERVICE_PORTS['neutron']['local']}/v2.0/networks",
             json=network_data,
             headers=headers,
             timeout=30
@@ -1635,7 +1651,7 @@ def create_network_in_openstack(network_config, headers, credentials, slice_id):
                 subnet_data['subnet']['gateway_ip'] = network_config['gateway']
             
             subnet_response = requests.post(
-                f"http://localhost:15002/v2.0/subnets",
+                f"http://localhost:{OPENSTACK_SERVICE_PORTS['neutron']['local']}/v2.0/subnets",
                 json=subnet_data,
                 headers=headers,
                 timeout=30
@@ -1660,7 +1676,7 @@ def create_instance_in_openstack(node_config, headers, credentials, slice_id):
     try:
         # Obtener imágenes disponibles (usar puerto 15003 para Glance)
         images_response = requests.get(
-            f"http://localhost:15003/v2/images",
+            f"http://localhost:{OPENSTACK_SERVICE_PORTS['glance']['local']}/v2/images",
             headers=headers,
             timeout=30
         )
@@ -1692,7 +1708,7 @@ def create_instance_in_openstack(node_config, headers, credentials, slice_id):
         
         # Obtener flavors (usar puerto 15001 para Nova)
         flavors_response = requests.get(
-            f"http://localhost:15001/v2.1/flavors",
+            f"http://localhost:{OPENSTACK_SERVICE_PORTS['nova']['local']}/v2.1/flavors",
             headers=headers,
             timeout=30
         )
@@ -1749,7 +1765,7 @@ def create_instance_in_openstack(node_config, headers, credentials, slice_id):
         }
         
         instance_response = requests.post(
-            f"http://localhost:15001/v2.1/servers",
+            f"http://localhost:{OPENSTACK_SERVICE_PORTS['nova']['local']}/v2.1/servers",
             json=instance_data,
             headers=headers,
             timeout=30
@@ -2333,6 +2349,88 @@ def debug_slice_config():
             'success': False,
             'error': str(e),
             'traceback': traceback.format_exc()
+        }), 500
+
+@app.route('/api/debug/openstack-test', methods=['POST'])
+@login_required
+def test_openstack_apis():
+    """Probar todas las APIs de OpenStack paso a paso"""
+    try:
+        logger.info("=== TESTING OPENSTACK APIS ===")
+        
+        # Paso 1: Verificar credenciales
+        credentials = get_user_openstack_credentials()
+        if not credentials:
+            return jsonify({'success': False, 'error': 'No OpenStack credentials configured'}), 400
+        
+        logger.info(f"Credentials: {credentials['auth_url']}, user: {credentials['username']}, project: {credentials['project_name']}")
+        
+        # Paso 2: Obtener token
+        logger.info("Step 1: Getting OpenStack token...")
+        token = get_openstack_token()
+        if not token:
+            return jsonify({'success': False, 'error': 'Failed to get OpenStack token'}), 400
+        
+        logger.info(f"✅ Token obtained: {token[:20]}...")
+        
+        # Paso 3: Probar API de Nova (Compute)
+        logger.info("Step 2: Testing Nova API...")
+        nova_response = make_openstack_request('GET', 'compute', '/flavors')
+        nova_success = nova_response and nova_response.status_code == 200
+        logger.info(f"Nova API: {'✅' if nova_success else '❌'} - Status: {nova_response.status_code if nova_response else 'No response'}")
+        
+        # Paso 4: Probar API de Glance (Images)
+        logger.info("Step 3: Testing Glance API...")
+        glance_response = make_openstack_request('GET', 'image', '/images')
+        glance_success = glance_response and glance_response.status_code == 200
+        logger.info(f"Glance API: {'✅' if glance_success else '❌'} - Status: {glance_response.status_code if glance_response else 'No response'}")
+        
+        # Paso 5: Probar API de Neutron (Network)
+        logger.info("Step 4: Testing Neutron API...")
+        neutron_response = make_openstack_request('GET', 'network', '/networks')
+        neutron_success = neutron_response and neutron_response.status_code == 200
+        logger.info(f"Neutron API: {'✅' if neutron_success else '❌'} - Status: {neutron_response.status_code if neutron_response else 'No response'}")
+        
+        # Paso 6: Buscar red pública
+        logger.info("Step 5: Finding public network...")
+        headers = {
+            'X-Auth-Token': token,
+            'Content-Type': 'application/json'
+        }
+        public_network_id = get_public_network_id(headers)
+        logger.info(f"Public network: {'✅' if public_network_id else '❌'} - ID: {public_network_id}")
+        
+        test_results = {
+            'credentials': bool(credentials),
+            'token': bool(token),
+            'nova_api': nova_success,
+            'glance_api': glance_success,
+            'neutron_api': neutron_success,
+            'public_network': bool(public_network_id),
+            'details': {
+                'nova_status': nova_response.status_code if nova_response else None,
+                'glance_status': glance_response.status_code if glance_response else None,
+                'neutron_status': neutron_response.status_code if neutron_response else None,
+                'public_network_id': public_network_id
+            }
+        }
+        
+        logger.info(f"=== TEST RESULTS: {test_results} ===")
+        
+        return jsonify({
+            'success': True,
+            'test_results': test_results
+        })
+        
+    except Exception as e:
+        import traceback
+        error_details = traceback.format_exc()
+        logger.error(f"OpenStack test error: {e}")
+        logger.error(f"Full traceback: {error_details}")
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'traceback': error_details
         }), 500
 
 @app.route('/api/openstack/public-networks')
