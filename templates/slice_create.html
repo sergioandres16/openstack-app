@@ -340,5 +340,167 @@ a:hover {
 
 {% block extra_js %}
 <script src="{{ url_for('static', filename='js/slice-create-openstack.js') }}"></script>
+<script>
+// Form submission handler
+$(document).ready(function() {
+    $('#sliceForm').on('submit', function(e) {
+        e.preventDefault();
+        submitSliceForm();
+    });
+    
+    // Preview button
+    $('#previewSlice').on('click', function(e) {
+        e.preventDefault();
+        showSlicePreview();
+    });
+});
+
+function submitSliceForm() {
+    console.log('🚀 Submitting slice form...');
+    
+    // Get form data
+    const formData = {
+        name: $('#sliceName').val().trim(),
+        description: $('#description').val().trim(),
+        topology_type: $('#topologyType').val(),
+        node_count: parseInt($('#nodeCount').val()) || 3,
+        flavor: $('#vmFlavor').val(),
+        image: $('#vmImage').val(),
+        network_name: $('#sliceNetworkName').val().trim(),
+        network_cidr: $('#sliceNetworkCidr').val().trim(),
+        enable_dhcp: $('#enableDHCP').is(':checked'),
+        vm_prefix: $('#vmNamePrefix').val().trim(),
+        cloud_init: $('#cloudInitScript').val().trim()
+    };
+    
+    // Validate required fields
+    const requiredFields = ['name', 'topology_type', 'flavor', 'image', 'network_name', 'network_cidr'];
+    for (const field of requiredFields) {
+        if (!formData[field]) {
+            showSimpleAlert('error', `Campo requerido: ${field}`);
+            return;
+        }
+    }
+    
+    console.log('📋 Form data:', formData);
+    
+    // Show progress modal
+    showProgressModal('Creando slice en OpenStack...', 'Este proceso puede tomar varios minutos.');
+    
+    // Submit to backend
+    $.ajax({
+        url: '/slice/create',
+        method: 'POST',
+        contentType: 'application/json',
+        data: JSON.stringify(formData),
+        timeout: 120000, // 2 minutes
+        success: function(response) {
+            hideProgressModal();
+            console.log('✅ Slice creation response:', response);
+            
+            if (response.success) {
+                showSimpleAlert('success', response.message || 'Slice creado exitosamente');
+                setTimeout(() => {
+                    window.location.href = '/slices';
+                }, 2000);
+            } else {
+                showSimpleAlert('error', response.error || 'Error creando slice');
+            }
+        },
+        error: function(xhr, status, error) {
+            hideProgressModal();
+            console.error('❌ Slice creation error:', status, error);
+            
+            let errorMessage = 'Error de conexión';
+            if (xhr.responseJSON && xhr.responseJSON.error) {
+                errorMessage = xhr.responseJSON.error;
+            } else if (xhr.responseText) {
+                try {
+                    const errorData = JSON.parse(xhr.responseText);
+                    errorMessage = errorData.error || errorMessage;
+                } catch (e) {
+                    errorMessage = xhr.responseText;
+                }
+            }
+            
+            showSimpleAlert('error', errorMessage);
+        }
+    });
+}
+
+function showSlicePreview() {
+    const summary = generateSliceSummary();
+    $('#summaryContent').html(summary);
+    $('#sliceSummary').show();
+    
+    // Scroll to summary
+    $('#sliceSummary')[0].scrollIntoView({ behavior: 'smooth' });
+}
+
+function generateSliceSummary() {
+    const formData = {
+        name: $('#sliceName').val(),
+        topology_type: $('#topologyType').val(),
+        node_count: parseInt($('#nodeCount').val()) || 3,
+        flavor: $('#vmFlavor option:selected').text(),
+        image: $('#vmImage option:selected').text(),
+        network_name: $('#sliceNetworkName').val(),
+        network_cidr: $('#sliceNetworkCidr').val()
+    };
+    
+    return `
+        <div class="row">
+            <div class="col-md-6">
+                <h6>📋 Configuración del Slice</h6>
+                <ul class="list-unstyled">
+                    <li><strong>Nombre:</strong> ${formData.name}</li>
+                    <li><strong>Topología:</strong> ${formData.topology_type}</li>
+                    <li><strong>Número de VMs:</strong> ${formData.node_count}</li>
+                    <li><strong>Flavor:</strong> ${formData.flavor}</li>
+                    <li><strong>Imagen:</strong> ${formData.image}</li>
+                </ul>
+            </div>
+            <div class="col-md-6">
+                <h6>🌐 Configuración de Red</h6>
+                <ul class="list-unstyled">
+                    <li><strong>Red del slice:</strong> ${formData.network_name}</li>
+                    <li><strong>CIDR:</strong> ${formData.network_cidr}</li>
+                    <li><strong>Acceso público:</strong> ✅ Habilitado</li>
+                    <li><strong>DHCP:</strong> ✅ Habilitado</li>
+                </ul>
+            </div>
+        </div>
+    `;
+}
+
+function showProgressModal(title, message) {
+    $('#progressMessage').text(title);
+    $('#progressModal .text-muted').text(message);
+    $('#progressModal').modal('show');
+}
+
+function hideProgressModal() {
+    $('#progressModal').modal('hide');
+}
+
+function showSimpleAlert(type, message) {
+    const alertClass = type === 'error' ? 'alert-danger' : 'alert-success';
+    const icon = type === 'error' ? 'fa-exclamation-triangle' : 'fa-check-circle';
+    
+    const alert = $(`
+        <div class="alert ${alertClass} alert-dismissible fade show" role="alert">
+            <i class="fas ${icon}"></i> ${message}
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        </div>
+    `);
+    
+    $('.container').prepend(alert);
+    
+    // Auto-dismiss after 5 seconds
+    setTimeout(() => {
+        alert.alert('close');
+    }, 5000);
+}
+</script>
 {% endblock %}
 {% endblock %}
