@@ -422,13 +422,42 @@ function generatePreviewHTML() {
 function submitSlice(e) {
     e.preventDefault();
     
+    // Si no hay nodos configurados, crear configuración básica automáticamente
     if (sliceData.nodes.length === 0) {
-        showAlert('error', 'Debe agregar al menos un nodo');
+        const nodeCount = parseInt($('#nodeCount').val()) || 3;
+        const topologyType = $('#topologyType').val();
+        
+        // Generar nodos básicos
+        for (let i = 0; i < nodeCount; i++) {
+            sliceData.nodes.push({
+                name: `node-${i + 1}`,
+                image: 'ubuntu-20.04',
+                flavor: 'small',
+                internet_access: i === 0
+            });
+        }
+        
+        // Generar red básica
+        if (sliceData.networks.length === 0) {
+            sliceData.networks.push({
+                name: `${topologyType}-network`,
+                cidr: '192.168.100.0/24',
+                network_type: 'data',
+                internet_access: true,
+                gateway: '192.168.100.1'
+            });
+        }
+    }
+    
+    // Validar nombre del slice
+    const sliceName = $('#sliceName').val().trim();
+    if (!sliceName) {
+        showAlert('error', 'El nombre del slice es obligatorio');
         return;
     }
     
     const formData = {
-        name: $('#sliceName').val(),
+        name: sliceName,
         description: $('#description').val(),
         infrastructure: $('#infrastructure').val(),
         topology_type: $('#topologyType').val(),
@@ -436,6 +465,7 @@ function submitSlice(e) {
         networks: sliceData.networks
     };
     
+    console.log('Enviando datos del slice:', formData);
     showSpinner('Creando slice...');
     
     $.ajax({

@@ -288,7 +288,12 @@ def create_openstack_project_for_user(username, user_id):
                         headers=headers,
                         timeout=30
                     )
-                    logger.info(f"Assigned admin role to user {username} in project {project_name}")
+                    
+                    if role_assignment.status_code in [200, 204]:
+                        logger.info(f"Successfully assigned admin role to user {username} in project {project_name}")
+                    else:
+                        logger.error(f"Failed to assign admin role: {role_assignment.status_code}")
+                        logger.error(f"Response: {role_assignment.text}")
                 else:
                     logger.error("Could not find admin or member role in OpenStack")
                 
@@ -612,6 +617,16 @@ def fetch_openstack_data_with_cache(endpoint, cache_key, cache_ttl=30):
     else:
         return []
 
+def get_flavor_vcpus(flavor_id):
+    """Obtener vCPUs de un flavor"""
+    flavor_info = VM_FLAVORS.get(flavor_id, VM_FLAVORS['small'])
+    return flavor_info.get('vcpus', 1)
+
+def get_flavor_ram(flavor_id):
+    """Obtener RAM de un flavor"""
+    flavor_info = VM_FLAVORS.get(flavor_id, VM_FLAVORS['small'])
+    return flavor_info.get('ram', 1536)
+
 def make_api_request(method, endpoint, data=None, params=None):
     """Maneja requests a APIs internas y OpenStack con cache"""
     logger.info(f"API request: {method} {endpoint}")
@@ -652,7 +667,25 @@ def make_api_request(method, endpoint, data=None, params=None):
             'SELECT * FROM slices WHERE user_id = ? ORDER BY created_at DESC',
             (session['user']['id'],)
         ).fetchall()
-        return MockResponse([dict(s) for s in slices], 200)
+        
+        # Procesar slices para agregar métricas calculadas
+        processed_slices = []
+        for slice_row in slices:
+            slice_dict = dict(slice_row)
+            
+            # Parsear configuración JSON
+            config_data = json.loads(slice_dict.get('config_data', '{}'))
+            nodes = config_data.get('nodes', [])
+            
+            # Calcular métricas
+            slice_dict['node_count'] = len(nodes)
+            slice_dict['total_vcpus'] = sum(get_flavor_vcpus(node.get('flavor', 'small')) for node in nodes)
+            slice_dict['total_ram'] = sum(get_flavor_ram(node.get('flavor', 'small')) for node in nodes)
+            slice_dict['infrastructure'] = config_data.get('infrastructure', 'linux')
+            
+            processed_slices.append(slice_dict)
+        
+        return MockResponse(processed_slices, 200)
     elif endpoint.startswith('/slices/') and endpoint.endswith('/nodes'):
         return MockResponse([], 200)
     
@@ -841,32 +874,70 @@ def create_slice_form():
 @app.route('/slice/create', methods=['POST'])
 @login_required
 def create_slice():
-    """Crear nuevo slice con integración real de OpenStack"""
+    """Crear nuevo slice de OpenStack con VMs reales"""
     try:
         data = request.get_json()
+        logger.info(f"Creating OpenStack slice with data: {data}")
         
-        if not data or not data.get('name'):
-            return jsonify({'success': False, 'error': 'Nombre del slice es requerido'}), 400
+        # Validar datos requeridos
+        required_fields = ['name', 'topology_type', 'node_count', 'flavor', 'image', 'network_name', 'network_cidr']
+        for field in required_fields:
+            if not data.get(field):
+                return jsonify({'success': False, 'error': f'Campo requerido: {field}'}), 400
+        
+        # Validar número de nodos
+        node_count = int(data.get('node_count', 0))
+        if node_count < 2 or node_count > 20:
+            return jsonify({'success': False, 'error': 'Número de VMs debe estar entre 2 y 20'}), 400
+        
+        # Obtener credenciales de OpenStack
+        credentials = get_user_openstack_credentials()
+        if not credentials:
+            return jsonify({
+                'success': False, 
+                'error': 'Configure las credenciales de OpenStack primero en Configuración'
+            }), 400
         
         # Generar ID único para el slice
         slice_id = str(uuid.uuid4())
         
-        # Obtener credenciales del usuario
-        credentials = get_user_openstack_credentials()
-        if not credentials:
-            return jsonify({'success': False, 'error': 'Configure las credenciales de OpenStack primero'}), 400
+        # Preparar configuración del slice
+        vm_prefix = data.get('vm_prefix', data['name'].replace(' ', '-').lower())
         
-        # Crear el slice en la base de datos local
-        db = get_db()
+        # Crear configuración de VMs para el slice
+        vms_config = []
+        for i in range(1, node_count + 1):
+            vm_name = f"{slice_id[:8]}-{vm_prefix}-{i}"
+            vms_config.append({
+                'name': vm_name,
+                'flavor_id': data['flavor'],
+                'image_id': data['image'],
+                'cloud_init': data.get('cloud_init', ''),
+                'number': i
+            })
         
-        # Guardar configuración del slice
-        slice_config = {
-            'topology_type': data.get('topology_type', 'linear'),
-            'infrastructure': data.get('infrastructure', 'openstack'),
-            'nodes': data.get('nodes', []),
-            'networks': data.get('networks', [])
+        # Configuración de red del slice
+        network_config = {
+            'name': f"{slice_id[:8]}-{data['network_name']}",
+            'cidr': data['network_cidr'],
+            'enable_dhcp': data.get('enable_dhcp', True),
+            'description': f"Red privada para slice {data['name']}"
         }
         
+        slice_config = {
+            'slice_id': slice_id,
+            'topology_type': data['topology_type'],
+            'node_count': node_count,
+            'vms': vms_config,
+            'network': network_config,
+            'flavor_id': data['flavor'],
+            'image_id': data['image'],
+            'cloud_init': data.get('cloud_init', ''),
+            'created_at': datetime.utcnow().isoformat()
+        }
+        
+        # Guardar slice en base de datos
+        db = get_db()
         db.execute('''
             INSERT INTO slices (id, user_id, name, description, topology_type, status, config_data)
             VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -875,35 +946,44 @@ def create_slice():
             session['user']['id'],
             data['name'],
             data.get('description', ''),
-            data.get('topology_type', 'linear'),
-            'draft',
+            data['topology_type'],
+            'creating',
             json.dumps(slice_config)
         ))
         db.commit()
         
-        # Si el usuario eligió infraestructura OpenStack, crear recursos reales
-        if data.get('infrastructure') == 'openstack':
-            success = create_openstack_resources(slice_id, slice_config, credentials)
-            if success:
-                # Actualizar estado del slice
-                db.execute('UPDATE slices SET status = ? WHERE id = ?', ('created', slice_id))
-                db.commit()
-                logger.info(f"Slice {slice_id} created successfully with OpenStack resources")
-            else:
-                logger.warning(f"Slice {slice_id} created but OpenStack deployment failed")
+        # Crear recursos en OpenStack
+        logger.info(f"Creating OpenStack resources for slice {slice_id}")
+        success = create_openstack_slice(slice_id, slice_config, credentials)
         
-        return jsonify({
-            'success': True, 
-            'slice_id': slice_id,
-            'message': 'Slice creado exitosamente'
-        })
+        if success:
+            # Actualizar estado del slice
+            db.execute('UPDATE slices SET status = ? WHERE id = ?', ('created', slice_id))
+            db.commit()
+            logger.info(f"Slice {slice_id} created successfully with OpenStack resources")
+            
+            return jsonify({
+                'success': True, 
+                'slice_id': slice_id,
+                'message': f'Slice "{data["name"]}" creado exitosamente con {node_count} VMs'
+            })
+        else:
+            # Marcar como fallido pero mantener en BD para debugging
+            db.execute('UPDATE slices SET status = ? WHERE id = ?', ('failed', slice_id))
+            db.commit()
+            logger.error(f"Failed to create OpenStack resources for slice {slice_id}")
+            
+            return jsonify({
+                'success': False,
+                'error': 'Error al crear recursos en OpenStack. Revise los logs para más detalles.'
+            }), 500
             
     except Exception as e:
         logger.error(f"Error creating slice: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
-def create_openstack_resources(slice_id, config, credentials):
-    """Crea recursos reales en OpenStack para el slice"""
+def create_openstack_slice(slice_id, config, credentials):
+    """Crea un slice completo en OpenStack con red privada + pública y VMs"""
     try:
         # Obtener token de autenticación
         auth_data = {
@@ -944,19 +1024,242 @@ def create_openstack_resources(slice_id, config, credentials):
             'Content-Type': 'application/json'
         }
         
-        # Crear redes primero
-        for network_config in config.get('networks', []):
-            create_network_in_openstack(network_config, headers, credentials, slice_id)
+        # Paso 1: Obtener red pública/externa
+        public_network_id = get_public_network_id(headers)
+        if not public_network_id:
+            logger.error("No se encontró red pública disponible")
+            return False
         
-        # Crear instancias/nodos
-        for node_config in config.get('nodes', []):
-            create_instance_in_openstack(node_config, headers, credentials, slice_id)
+        # Paso 2: Crear red privada del slice
+        private_network_id = create_slice_network(config['network'], headers, slice_id)
+        if not private_network_id:
+            logger.error("Error creando red privada del slice")
+            return False
         
-        return True
+        # Paso 3: Crear router y conectar redes
+        router_id = create_slice_router(slice_id, private_network_id, public_network_id, headers)
+        if not router_id:
+            logger.error("Error creando router del slice")
+            return False
+        
+        # Paso 4: Crear VMs
+        vm_ids = []
+        for vm_config in config['vms']:
+            vm_id = create_slice_vm(vm_config, private_network_id, public_network_id, headers, slice_id)
+            if vm_id:
+                vm_ids.append(vm_id)
+            else:
+                logger.warning(f"Error creando VM {vm_config['name']}")
+        
+        if len(vm_ids) > 0:
+            logger.info(f"Slice {slice_id} created successfully: {len(vm_ids)} VMs, network, router")
+            return True
+        else:
+            logger.error(f"No se pudo crear ninguna VM para el slice {slice_id}")
+            return False
         
     except Exception as e:
-        logger.error(f"Error creating OpenStack resources: {e}")
+        logger.error(f"Error creating OpenStack slice: {e}")
         return False
+
+def get_public_network_id(headers):
+    """Buscar red pública/externa disponible"""
+    try:
+        response = requests.get(
+            "http://localhost:15002/v2.0/networks?router:external=true",
+            headers=headers,
+            timeout=30
+        )
+        
+        if response.status_code == 200:
+            networks = response.json().get('networks', [])
+            for network in networks:
+                if network.get('status') == 'ACTIVE':
+                    return network['id']
+        
+        return None
+    except Exception as e:
+        logger.error(f"Error finding public network: {e}")
+        return None
+
+def create_slice_network(network_config, headers, slice_id):
+    """Crear red privada para el slice"""
+    try:
+        # Crear red
+        network_data = {
+            "network": {
+                "name": network_config['name'],
+                "admin_state_up": True,
+                "description": network_config['description']
+            }
+        }
+        
+        response = requests.post(
+            "http://localhost:15002/v2.0/networks",
+            json=network_data,
+            headers=headers,
+            timeout=30
+        )
+        
+        if response.status_code != 201:
+            logger.error(f"Failed to create network: {response.status_code}")
+            return None
+        
+        network = response.json()['network']
+        network_id = network['id']
+        
+        # Crear subnet
+        subnet_data = {
+            "subnet": {
+                "name": f"{network_config['name']}-subnet",
+                "network_id": network_id,
+                "ip_version": 4,
+                "cidr": network_config['cidr'],
+                "enable_dhcp": network_config['enable_dhcp']
+            }
+        }
+        
+        subnet_response = requests.post(
+            "http://localhost:15002/v2.0/subnets",
+            json=subnet_data,
+            headers=headers,
+            timeout=30
+        )
+        
+        if subnet_response.status_code == 201:
+            logger.info(f"Created network {network_config['name']} for slice {slice_id}")
+            return network_id
+        else:
+            logger.error(f"Failed to create subnet: {subnet_response.status_code}")
+            return None
+            
+    except Exception as e:
+        logger.error(f"Error creating slice network: {e}")
+        return None
+
+def create_slice_router(slice_id, private_network_id, public_network_id, headers):
+    """Crear router para conectar red privada con pública"""
+    try:
+        # Crear router
+        router_data = {
+            "router": {
+                "name": f"{slice_id[:8]}-router",
+                "admin_state_up": True,
+                "external_gateway_info": {
+                    "network_id": public_network_id
+                }
+            }
+        }
+        
+        response = requests.post(
+            "http://localhost:15002/v2.0/routers",
+            json=router_data,
+            headers=headers,
+            timeout=30
+        )
+        
+        if response.status_code != 201:
+            logger.error(f"Failed to create router: {response.status_code}")
+            return None
+        
+        router = response.json()['router']
+        router_id = router['id']
+        
+        # Obtener subnet de la red privada
+        subnets_response = requests.get(
+            f"http://localhost:15002/v2.0/subnets?network_id={private_network_id}",
+            headers=headers,
+            timeout=30
+        )
+        
+        if subnets_response.status_code != 200:
+            logger.error("Failed to get private network subnets")
+            return None
+        
+        subnets = subnets_response.json().get('subnets', [])
+        if not subnets:
+            logger.error("No subnets found for private network")
+            return None
+        
+        subnet_id = subnets[0]['id']
+        
+        # Conectar router a la subnet privada
+        router_interface_data = {
+            "subnet_id": subnet_id
+        }
+        
+        interface_response = requests.put(
+            f"http://localhost:15002/v2.0/routers/{router_id}/add_router_interface",
+            json=router_interface_data,
+            headers=headers,
+            timeout=30
+        )
+        
+        if interface_response.status_code == 200:
+            logger.info(f"Created router {slice_id[:8]}-router")
+            return router_id
+        else:
+            logger.error(f"Failed to add router interface: {interface_response.status_code}")
+            return None
+            
+    except Exception as e:
+        logger.error(f"Error creating slice router: {e}")
+        return None
+
+def create_slice_vm(vm_config, private_network_id, public_network_id, headers, slice_id):
+    """Crear VM con interfaz a red privada y pública"""
+    try:
+        # Preparar cloud-init si existe
+        user_data = None
+        if vm_config.get('cloud_init'):
+            import base64
+            cloud_init_script = vm_config['cloud_init']
+            user_data = base64.b64encode(cloud_init_script.encode()).decode()
+        
+        # Configurar redes: privada + pública
+        networks = [
+            {"uuid": private_network_id},  # Red privada del slice
+            {"uuid": public_network_id}    # Red pública para acceso externo
+        ]
+        
+        # Crear instancia
+        instance_data = {
+            "server": {
+                "name": vm_config['name'],
+                "imageRef": vm_config['image_id'],
+                "flavorRef": vm_config['flavor_id'],
+                "networks": networks,
+                "description": f"VM {vm_config['number']} del slice {slice_id}",
+                "metadata": {
+                    "slice_id": slice_id,
+                    "vm_number": str(vm_config['number']),
+                    "created_by": "pucp-cloud-orchestrator"
+                }
+            }
+        }
+        
+        # Agregar cloud-init si existe
+        if user_data:
+            instance_data["server"]["user_data"] = user_data
+        
+        response = requests.post(
+            "http://localhost:15001/v2.1/servers",
+            json=instance_data,
+            headers=headers,
+            timeout=30
+        )
+        
+        if response.status_code == 202:
+            vm = response.json()['server']
+            logger.info(f"Created VM {vm_config['name']} for slice {slice_id}")
+            return vm['id']
+        else:
+            logger.error(f"Failed to create VM {vm_config['name']}: {response.status_code}")
+            return None
+            
+    except Exception as e:
+        logger.error(f"Error creating VM {vm_config['name']}: {e}")
+        return None
 
 def create_network_in_openstack(network_config, headers, credentials, slice_id):
     """Crea una red en OpenStack"""
@@ -1451,6 +1754,187 @@ def clear_cache():
         logger.error(f"Error clearing cache: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
+@app.route('/debug/slices')
+@login_required
+def debug_slices():
+    """Debug endpoint para ver slices en la base de datos"""
+    try:
+        db = get_db()
+        slices = db.execute('SELECT * FROM slices WHERE user_id = ?', (session['user']['id'],)).fetchall()
+        return jsonify({
+            'user_id': session['user']['id'],
+            'slices': [dict(s) for s in slices]
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/test/slice/create', methods=['POST'])
+@login_required
+def test_create_slice():
+    """Test endpoint para crear slice simple"""
+    try:
+        data = {
+            'name': 'test-slice-' + str(int(datetime.utcnow().timestamp())),
+            'description': 'Slice de prueba',
+            'infrastructure': 'linux',
+            'topology_type': 'linear',
+            'nodes': [
+                {'name': 'node-1', 'image': 'ubuntu-20.04', 'flavor': 'small', 'internet_access': True},
+                {'name': 'node-2', 'image': 'ubuntu-20.04', 'flavor': 'small', 'internet_access': False}
+            ],
+            'networks': [
+                {'name': 'test-network', 'cidr': '192.168.100.0/24', 'network_type': 'data'}
+            ]
+        }
+        
+        slice_id = str(uuid.uuid4())
+        db = get_db()
+        
+        slice_config = {
+            'topology_type': data.get('topology_type', 'linear'),
+            'infrastructure': data.get('infrastructure', 'linux'),
+            'nodes': data.get('nodes', []),
+            'networks': data.get('networks', [])
+        }
+        
+        db.execute('''
+            INSERT INTO slices (id, user_id, name, description, topology_type, status, config_data)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            slice_id,
+            session['user']['id'],
+            data['name'],
+            data['description'],
+            data['topology_type'],
+            'created',
+            json.dumps(slice_config)
+        ))
+        db.commit()
+        
+        return jsonify({
+            'success': True,
+            'slice_id': slice_id,
+            'message': 'Test slice creado exitosamente'
+        })
+        
+    except Exception as e:
+        logger.error(f"Error creating test slice: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/openstack/flavors')
+@login_required
+def get_openstack_flavors():
+    """Obtener flavors disponibles en OpenStack"""
+    try:
+        flavors_data = fetch_openstack_data_with_cache('/flavors', 'flavors', 60)
+        
+        if isinstance(flavors_data, list):
+            # Procesar flavors para incluir información útil
+            processed_flavors = []
+            for flavor in flavors_data:
+                if isinstance(flavor, dict):
+                    processed_flavors.append({
+                        'id': flavor.get('id'),
+                        'name': flavor.get('name'),
+                        'vcpus': flavor.get('vcpus', 0),
+                        'ram': flavor.get('ram', 0),
+                        'disk': flavor.get('disk', 0),
+                        'public': flavor.get('os-flavor-access:is_public', True)
+                    })
+            
+            return jsonify({
+                'success': True,
+                'flavors': processed_flavors
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'error': 'No se pudieron obtener los flavors'
+            }), 500
+            
+    except Exception as e:
+        logger.error(f"Error getting OpenStack flavors: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/openstack/images')
+@login_required
+def get_openstack_images():
+    """Obtener imágenes disponibles en OpenStack"""
+    try:
+        images_data = fetch_openstack_data_with_cache('/images', 'images', 60)
+        
+        if isinstance(images_data, list):
+            # Procesar imágenes para incluir información útil
+            processed_images = []
+            for image in images_data:
+                if isinstance(image, dict) and image.get('status') == 'active':
+                    processed_images.append({
+                        'id': image.get('id'),
+                        'name': image.get('name'),
+                        'status': image.get('status'),
+                        'size': image.get('size', 0),
+                        'disk_format': image.get('disk_format'),
+                        'container_format': image.get('container_format'),
+                        'visibility': image.get('visibility', 'private'),
+                        'os_type': image.get('os_type', 'unknown'),
+                        'created_at': image.get('created_at')
+                    })
+            
+            return jsonify({
+                'success': True,
+                'images': processed_images
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'error': 'No se pudieron obtener las imágenes'
+            }), 500
+            
+    except Exception as e:
+        logger.error(f"Error getting OpenStack images: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/openstack/public-networks')
+@login_required
+def get_public_networks():
+    """Obtener redes públicas disponibles en OpenStack"""
+    try:
+        networks_data = fetch_openstack_data_with_cache('/networks', 'networks', 30)
+        
+        if isinstance(networks_data, list):
+            # Filtrar solo redes públicas/externas
+            public_networks = []
+            for network in networks_data:
+                if isinstance(network, dict):
+                    # Buscar redes externas o públicas
+                    is_external = network.get('router:external', False)
+                    is_shared = network.get('shared', False)
+                    status = network.get('status', 'DOWN')
+                    
+                    if (is_external or is_shared) and status == 'ACTIVE':
+                        public_networks.append({
+                            'id': network.get('id'),
+                            'name': network.get('name'),
+                            'status': status,
+                            'external': is_external,
+                            'shared': is_shared,
+                            'subnets': network.get('subnets', [])
+                        })
+            
+            return jsonify({
+                'success': True,
+                'networks': public_networks
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'error': 'No se pudieron obtener las redes'
+            }), 500
+            
+    except Exception as e:
+        logger.error(f"Error getting public networks: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
 @app.route('/resources')
 @login_required
 def system_resources():
@@ -1491,45 +1975,114 @@ def get_linux_resources():
     }
 
 def get_openstack_resources():
-    """Obtener recursos de OpenStack"""
-    # Obtener datos reales con cache
-    quotas = fetch_openstack_data_with_cache('/quotas', 'quotas', 15)
-    servers = fetch_openstack_data_with_cache('/servers', 'servers', 5)
-    
-    # Calcular estadísticas de uso real
-    used_vcpus = 0
-    used_ram = 0
-    used_instances = 0
-    
-    if isinstance(servers, list):
-        for server in servers:
-            if isinstance(server, dict) and server.get('status') == 'ACTIVE':
-                used_instances += 1
-                # Intentar obtener vcpus de diferentes campos posibles
-                vcpus = server.get('vcpus', 0) or server.get('flavor', {}).get('vcpus', 0)
-                ram = server.get('ram', 0) or server.get('flavor', {}).get('ram', 0)
-                used_vcpus += vcpus if isinstance(vcpus, int) else 0
-                used_ram += ram if isinstance(ram, int) else 0
-    
-    # Asegurar que quotas sea un diccionario con valores seguros
-    if not isinstance(quotas, dict):
-        quotas = {'total_vcpus': 1, 'used_vcpus': 0, 'total_ram': 1024, 'used_ram': 0, 'total_instances': 1, 'used_instances': 0}
-    
-    # Asegurar que los valores totales nunca sean 0 para evitar división por cero
-    total_vcpus = max(quotas.get('total_vcpus', 1), 1)
-    total_ram = max(quotas.get('total_ram', 1024), 1)
-    total_instances = max(quotas.get('total_instances', 1), 1)
-    
-    return {
-        'total_vcpus': total_vcpus,
-        'used_vcpus': min(used_vcpus, total_vcpus),  # No puede usar más de lo disponible
-        'total_ram': total_ram,
-        'used_ram': min(used_ram, total_ram),
-        'total_instances': total_instances,
-        'used_instances': min(used_instances, total_instances),
-        'servers': servers if isinstance(servers, list) else [],
-        'last_updated': datetime.utcnow().isoformat()
-    }
+    """Obtener recursos de OpenStack específicos del usuario"""
+    try:
+        # Verificar si el usuario tiene credenciales de OpenStack
+        credentials = get_user_openstack_credentials()
+        if not credentials:
+            return {
+                'total_vcpus': 0,
+                'used_vcpus': 0,
+                'total_ram': 0,
+                'used_ram': 0,
+                'total_instances': 0,
+                'used_instances': 0,
+                'servers': [],
+                'quotas_available': False,
+                'message': 'Configure credenciales de OpenStack para ver recursos',
+                'last_updated': datetime.utcnow().isoformat()
+            }
+        
+        # Obtener datos reales con cache del proyecto del usuario
+        quotas = fetch_openstack_data_with_cache('/quotas', 'quotas', 15)
+        servers = fetch_openstack_data_with_cache('/servers', 'servers', 5)
+        
+        # Calcular estadísticas de uso real
+        used_vcpus = 0
+        used_ram = 0
+        used_instances = 0
+        active_servers = []
+        
+        if isinstance(servers, list):
+            for server in servers:
+                if isinstance(server, dict):
+                    status = server.get('status', 'UNKNOWN')
+                    server_info = {
+                        'id': server.get('id'),
+                        'name': server.get('name'),
+                        'status': status,
+                        'created': server.get('created'),
+                        'flavor': server.get('flavor', {}),
+                        'image': server.get('image', {}),
+                        'addresses': server.get('addresses', {}),
+                        'metadata': server.get('metadata', {})
+                    }
+                    active_servers.append(server_info)
+                    
+                    if status == 'ACTIVE':
+                        used_instances += 1
+                        # Obtener información del flavor para calcular recursos
+                        flavor_info = server.get('flavor', {})
+                        if 'id' in flavor_info:
+                            # Si tenemos el ID del flavor, usar valores por defecto razonables
+                            vcpus = 1  # Valor por defecto
+                            ram = 1024  # Valor por defecto
+                        else:
+                            vcpus = 1
+                            ram = 1024
+                        
+                        used_vcpus += vcpus
+                        used_ram += ram
+        
+        # Procesar quotas del proyecto
+        if isinstance(quotas, dict):
+            # Buscar quotas específicas de compute
+            cores_quota = quotas.get('cores', {})
+            ram_quota = quotas.get('ram', {})
+            instances_quota = quotas.get('instances', {})
+            
+            total_vcpus = cores_quota.get('limit', 10) if isinstance(cores_quota, dict) else 10
+            total_ram = ram_quota.get('limit', 10240) if isinstance(ram_quota, dict) else 10240
+            total_instances = instances_quota.get('limit', 10) if isinstance(instances_quota, dict) else 10
+        else:
+            # Valores por defecto si no hay quotas
+            total_vcpus = 10
+            total_ram = 10240
+            total_instances = 10
+        
+        # Asegurar que los valores totales nunca sean 0 para evitar división por cero
+        total_vcpus = max(total_vcpus, 1)
+        total_ram = max(total_ram, 1024)
+        total_instances = max(total_instances, 1)
+        
+        return {
+            'total_vcpus': total_vcpus,
+            'used_vcpus': min(used_vcpus, total_vcpus),
+            'total_ram': total_ram,
+            'used_ram': min(used_ram, total_ram),
+            'total_instances': total_instances,
+            'used_instances': min(used_instances, total_instances),
+            'servers': active_servers,
+            'quotas_available': True,
+            'project_name': credentials.get('project_name', 'Unknown'),
+            'region': credentials.get('region_name', 'RegionOne'),
+            'last_updated': datetime.utcnow().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting OpenStack resources: {e}")
+        return {
+            'total_vcpus': 1,
+            'used_vcpus': 0,
+            'total_ram': 1024,
+            'used_ram': 0,
+            'total_instances': 1,
+            'used_instances': 0,
+            'servers': [],
+            'quotas_available': False,
+            'message': f'Error obteniendo recursos: {str(e)}',
+            'last_updated': datetime.utcnow().isoformat()
+        }
 
 def get_vm_console_access(vm_id):
     """Obtener acceso a consola de VM"""

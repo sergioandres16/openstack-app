@@ -7,7 +7,7 @@
     <div class="row">
         <div class="col">
             <h1><i class="fas fa-plus"></i> Crear Nuevo Slice</h1>
-            <p class="text-muted">Configure su slice con la topología seleccionada: <strong>{{ topologies[topology].name }}</strong></p>
+            <p class="text-muted">Un slice es un conjunto de VMs que forman una topología específica en OpenStack</p>
         </div>
     </div>
 
@@ -15,22 +15,27 @@
         <!-- Información Básica -->
         <div class="card mb-4">
             <div class="card-header">
-                <h5><i class="fas fa-info-circle"></i> Información Básica</h5>
+                <h5><i class="fas fa-info-circle"></i> Información del Slice</h5>
             </div>
             <div class="card-body">
                 <div class="row">
                     <div class="col-md-6">
                         <div class="mb-3">
                             <label for="sliceName" class="form-label">Nombre del Slice *</label>
-                            <input type="text" class="form-control" id="sliceName" name="name" required>
+                            <input type="text" class="form-control" id="sliceName" name="name" required
+                                   placeholder="ej: web-cluster, db-replication">
+                            <div class="form-text">Nombre único para identificar su slice</div>
                         </div>
                     </div>
                     <div class="col-md-6">
                         <div class="mb-3">
-                            <label for="infrastructure" class="form-label">Infraestructura *</label>
-                            <select class="form-select" id="infrastructure" name="infrastructure" required>
-                                <option value="linux">Cluster Linux (Libvirt/KVM)</option>
-                                <option value="openstack">OpenStack</option>
+                            <label for="topologyType" class="form-label">Topología *</label>
+                            <select class="form-select" id="topologyType" name="topology_type" required>
+                                {% for topo_id, topo in topologies.items() %}
+                                <option value="{{ topo_id }}" {{ 'selected' if topo_id == topology else '' }}>
+                                    {{ topo.name }} - {{ topo.description }}
+                                </option>
+                                {% endfor %}
                             </select>
                         </div>
                     </div>
@@ -41,106 +46,134 @@
                     <textarea class="form-control" id="description" name="description" rows="3" 
                               placeholder="Describe el propósito de este slice..."></textarea>
                 </div>
+
+                <div class="row">
+                    <div class="col-md-6">
+                        <div class="mb-3">
+                            <label for="nodeCount" class="form-label">Número de VMs</label>
+                            <input type="number" class="form-control" id="nodeCount" name="node_count" 
+                                   value="3" min="2" max="20">
+                            <div class="form-text">Entre 2 y 20 VMs</div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="mb-3">
+                            <label for="vmNamePrefix" class="form-label">Prefijo para nombres de VMs</label>
+                            <input type="text" class="form-control" id="vmNamePrefix" name="vm_prefix" 
+                                   placeholder="ej: web, db, app">
+                            <div class="form-text">Se numerarán automáticamente: prefix-1, prefix-2, etc.</div>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
 
-        <!-- Configuración de Topología -->
+        <!-- Configuración de VMs -->
         <div class="card mb-4">
             <div class="card-header">
-                <h5><i class="fas fa-project-diagram"></i> Configuración de Topología</h5>
+                <h5><i class="fas fa-server"></i> Configuración de VMs</h5>
             </div>
             <div class="card-body">
                 <div class="row">
-                    <div class="col-md-8">
+                    <div class="col-md-6">
                         <div class="mb-3">
-                            <label for="topologyType" class="form-label">Tipo de Topología</label>
-                            <select class="form-select" id="topologyType" name="topology_type">
-                                {% for topo_id, topo in topologies.items() %}
-                                <option value="{{ topo_id }}" {{ 'selected' if topo_id == topology else '' }}>
-                                    {{ topo.name }} - {{ topo.description }}
-                                </option>
-                                {% endfor %}
+                            <label for="vmFlavor" class="form-label">Flavor (Capacidad) *</label>
+                            <select class="form-select" id="vmFlavor" name="flavor" required>
+                                <option value="">Cargando flavors...</option>
                             </select>
+                            <div class="form-text" id="flavorDetails">Seleccione un flavor para ver detalles</div>
                         </div>
-                        
+                    </div>
+                    <div class="col-md-6">
                         <div class="mb-3">
-                            <label for="nodeCount" class="form-label">Número de Nodos</label>
-                            <input type="number" class="form-control" id="nodeCount" name="node_count" 
-                                   value="3" min="{{ topologies[topology].min_nodes }}" 
-                                   max="{{ topologies[topology].max_nodes }}">
-                            <div class="form-text">
-                                Mínimo: {{ topologies[topology].min_nodes }}, 
-                                Máximo: {{ topologies[topology].max_nodes }}
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <div class="col-md-4">
-                        <div class="card bg-light">
-                            <div class="card-body text-center">
-                                <h6>{{ topologies[topology].name }}</h6>
-                                <div class="topology-visual">{{ topologies[topology].icon }}</div>
-                                <p class="small">{{ topologies[topology].description }}</p>
-                                
-                                <div class="mt-3">
-                                    <strong>Casos de uso:</strong>
-                                    <ul class="list-unstyled small">
-                                        {% for use_case in topologies[topology].use_cases %}
-                                        <li>• {{ use_case }}</li>
-                                        {% endfor %}
-                                    </ul>
-                                </div>
-                            </div>
+                            <label for="vmImage" class="form-label">Imagen del Sistema *</label>
+                            <select class="form-select" id="vmImage" name="image" required>
+                                <option value="">Cargando imágenes...</option>
+                            </select>
+                            <div class="form-text" id="imageDetails">Seleccione una imagen para ver detalles</div>
                         </div>
                     </div>
                 </div>
-                
-                <div class="row">
-                    <div class="col">
-                        <button type="button" class="btn btn-secondary" id="generateTopology">
-                            <i class="fas fa-magic"></i> Generar Topología Automáticamente
-                        </button>
-                        <button type="button" class="btn btn-outline-secondary" id="customizeNodes">
-                            <i class="fas fa-cogs"></i> Personalizar Nodos
-                        </button>
-                    </div>
-                </div>
             </div>
         </div>
 
-        <!-- Configuración de Nodos -->
-        <div class="card mb-4" id="nodesCard" style="display: none;">
-            <div class="card-header d-flex justify-content-between align-items-center">
-                <h5><i class="fas fa-server"></i> Configuración de Nodos</h5>
-                <button type="button" class="btn btn-sm btn-primary" id="addNode">
-                    <i class="fas fa-plus"></i> Agregar Nodo
-                </button>
-            </div>
-            <div class="card-body">
-                <div id="nodesList"></div>
-            </div>
-        </div>
-
-        <!-- Configuración de Redes -->
-        <div class="card mb-4" id="networksCard" style="display: none;">
-            <div class="card-header d-flex justify-content-between align-items-center">
-                <h5><i class="fas fa-network-wired"></i> Configuración de Redes</h5>
-                <button type="button" class="btn btn-sm btn-success" id="addNetwork">
-                    <i class="fas fa-plus"></i> Agregar Red
-                </button>
-            </div>
-            <div class="card-body">
-                <div id="networksList"></div>
-            </div>
-        </div>
-
-        <!-- Vista Previa -->
-        <div class="card mb-4" id="previewCard" style="display: none;">
+        <!-- Configuración de Red -->
+        <div class="card mb-4">
             <div class="card-header">
-                <h5><i class="fas fa-eye"></i> Vista Previa</h5>
+                <h5><i class="fas fa-network-wired"></i> Configuración de Red</h5>
             </div>
             <div class="card-body">
-                <div id="slicePreview"></div>
+                <div class="alert alert-info">
+                    <i class="fas fa-info-circle"></i> 
+                    <strong>Configuración automática:</strong> Todas las VMs tendrán automáticamente una interfaz 
+                    conectada a la red pública para acceso desde internet.
+                </div>
+
+                <div class="row">
+                    <div class="col-md-6">
+                        <div class="mb-3">
+                            <label for="sliceNetworkName" class="form-label">Nombre de Red del Slice *</label>
+                            <input type="text" class="form-control" id="sliceNetworkName" name="network_name" required
+                                   placeholder="ej: web-internal, cluster-net">
+                            <div class="form-text">Red privada para comunicación entre VMs del slice</div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="mb-3">
+                            <label for="sliceNetworkCidr" class="form-label">CIDR de la Red *</label>
+                            <input type="text" class="form-control" id="sliceNetworkCidr" name="network_cidr" 
+                                   value="192.168.100.0/24" required
+                                   placeholder="192.168.100.0/24">
+                            <div class="form-text">Rango de IPs para la red privada del slice</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="mb-3">
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="enableDHCP" checked>
+                        <label class="form-check-label" for="enableDHCP">
+                            Habilitar DHCP en la red del slice
+                        </label>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Cloud-Init (Opcional) -->
+        <div class="card mb-4">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5><i class="fas fa-code"></i> Cloud-Init (Opcional)</h5>
+                <button type="button" class="btn btn-sm btn-outline-secondary" id="toggleCloudInit">
+                    <i class="fas fa-chevron-down"></i> Mostrar
+                </button>
+            </div>
+            <div class="card-body" id="cloudInitSection" style="display: none;">
+                <div class="mb-3">
+                    <label for="cloudInitScript" class="form-label">Script de Cloud-Init</label>
+                    <textarea class="form-control" id="cloudInitScript" name="cloud_init" rows="10"
+                              placeholder="#!/bin/bash&#10;# Script de inicialización automática&#10;apt-get update&#10;apt-get install -y nginx&#10;systemctl start nginx"></textarea>
+                    <div class="form-text">
+                        Script que se ejecutará automáticamente al iniciar cada VM. 
+                        <a href="https://cloud-init.io/" target="_blank">Documentación de Cloud-Init</a>
+                    </div>
+                </div>
+
+                <div class="alert alert-warning">
+                    <i class="fas fa-exclamation-triangle"></i>
+                    <strong>Nota:</strong> El script se ejecutará en todas las VMs del slice con privilegios de root.
+                    Asegúrese de que el script sea seguro y no contenga información sensible.
+                </div>
+            </div>
+        </div>
+
+        <!-- Resumen del Slice -->
+        <div class="card mb-4" id="sliceSummary" style="display: none;">
+            <div class="card-header">
+                <h5><i class="fas fa-eye"></i> Resumen del Slice</h5>
+            </div>
+            <div class="card-body">
+                <div id="summaryContent"></div>
             </div>
         </div>
 
@@ -149,12 +182,12 @@
             <div class="col">
                 <div class="d-flex gap-2">
                     <button type="submit" class="btn btn-primary">
-                        <i class="fas fa-save"></i> Crear Slice
+                        <i class="fas fa-rocket"></i> Crear Slice
                     </button>
                     <button type="button" class="btn btn-outline-primary" id="previewSlice">
                         <i class="fas fa-eye"></i> Vista Previa
                     </button>
-                    <a href="{{ url_for('dashboard') }}" class="btn btn-secondary">
+                    <a href="{{ url_for('list_slices') }}" class="btn btn-secondary">
                         <i class="fas fa-times"></i> Cancelar
                     </a>
                 </div>
@@ -162,150 +195,6 @@
         </div>
     </form>
 </div>
-
-<!-- Modal para configuración de nodo -->
-<div class="modal fade" id="nodeConfigModal" tabindex="-1">
-    <div class="modal-dialog">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h5 class="modal-title">Configurar Nodo</h5>
-                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-            </div>
-            <div class="modal-body">
-                <form id="nodeConfigForm">
-                    <div class="mb-3">
-                        <label for="nodeName" class="form-label">Nombre del Nodo</label>
-                        <input type="text" class="form-control" id="nodeName" required>
-                    </div>
-                    
-                    <div class="mb-3">
-                        <label for="nodeImage" class="form-label">Imagen del Sistema</label>
-                        <select class="form-select" id="nodeImage" required>
-                            <option value="ubuntu-20.04">Ubuntu 20.04 LTS</option>
-                            <option value="ubuntu-22.04">Ubuntu 22.04 LTS</option>
-                            <option value="centos-8">CentOS 8 Stream</option>
-                            <option value="alpine">Alpine Linux</option>
-                        </select>
-                    </div>
-                    
-                    <div class="mb-3">
-                        <label for="nodeFlavor" class="form-label">Capacidad de la VM</label>
-                        <select class="form-select" id="nodeFlavor" required>
-                            {% for flavor_id, flavor in flavors.items() %}
-                            <option value="{{ flavor_id }}" data-vcpus="{{ flavor.vcpus }}" 
-                                    data-ram="{{ flavor.ram }}" data-disk="{{ flavor.disk }}">
-                                {{ flavor.description }}
-                            </option>
-                            {% endfor %}
-                        </select>
-                        <div class="form-text" id="flavorDetails"></div>
-                    </div>
-                    
-                    <div class="mb-3">
-                        <div class="form-check">
-                            <input class="form-check-input" type="checkbox" id="internetAccess">
-                            <label class="form-check-label" for="internetAccess">
-                                Acceso a Internet
-                            </label>
-                        </div>
-                    </div>
-                    
-                    <div class="mb-3">
-                        <label for="managementIp" class="form-label">IP de Gestión (opcional)</label>
-                        <input type="text" class="form-control" id="managementIp" 
-                               placeholder="192.168.1.100">
-                    </div>
-                </form>
-            </div>
-            <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
-                <button type="button" class="btn btn-primary" id="saveNodeConfig">Guardar</button>
-            </div>
-        </div>
-    </div>
-</div>
-
-<!-- Modal para configuración de red -->
-<div class="modal fade" id="networkConfigModal" tabindex="-1">
-    <div class="modal-dialog">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h5 class="modal-title">Configurar Red</h5>
-                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-            </div>
-            <div class="modal-body">
-                <form id="networkConfigForm">
-                    <div class="mb-3">
-                        <label for="networkName" class="form-label">Nombre de la Red</label>
-                        <input type="text" class="form-control" id="networkName" required>
-                    </div>
-                    
-                    <div class="mb-3">
-                        <label for="networkCidr" class="form-label">CIDR</label>
-                        <input type="text" class="form-control" id="networkCidr" 
-                               placeholder="192.168.1.0/24" required>
-                    </div>
-                    
-                    <div class="mb-3">
-                        <label for="networkType" class="form-label">Tipo de Red</label>
-                        <select class="form-select" id="networkType" required>
-                            <option value="data">Red de Datos</option>
-                            <option value="management">Red de Gestión</option>
-                            <option value="external">Red Externa</option>
-                        </select>
-                    </div>
-                    
-                    <div class="mb-3">
-                        <div class="form-check">
-                            <input class="form-check-input" type="checkbox" id="networkInternet">
-                            <label class="form-check-label" for="networkInternet">
-                                Acceso a Internet
-                            </label>
-                        </div>
-                    </div>
-                    
-                    <div class="mb-3">
-                        <label for="networkGateway" class="form-label">Gateway (opcional)</label>
-                        <input type="text" class="form-control" id="networkGateway" 
-                               placeholder="192.168.1.1">
-                    </div>
-                </form>
-            </div>
-            <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
-                <button type="button" class="btn btn-success" id="saveNetworkConfig">Guardar</button>
-            </div>
-        </div>
-    </div>
-</div>
-
-<style>
-.topology-visual {
-    font-family: monospace;
-    white-space: pre-line;
-    font-size: 12px;
-    line-height: 1.2;
-    background: #f8f9fa;
-    padding: 10px;
-    border-radius: 5px;
-    margin: 10px 0;
-}
-
-.node-item, .network-item {
-    border: 1px solid #dee2e6;
-    border-radius: 8px;
-    padding: 15px;
-    margin-bottom: 10px;
-    background: #f8f9fa;
-}
-
-.resource-summary {
-    background: #e3f2fd;
-    padding: 10px;
-    border-radius: 5px;
-    margin-top: 10px;
-}
-</style>
 
 <!-- Modal de progreso -->
 <div class="modal fade" id="progressModal" tabindex="-1" data-bs-backdrop="static" data-bs-keyboard="false">
@@ -315,14 +204,57 @@
                 <div class="spinner-border text-primary mb-3" role="status">
                     <span class="visually-hidden">Cargando...</span>
                 </div>
-                <h5 id="progressMessage">Procesando...</h5>
-                <p class="text-muted">Por favor espere mientras se completa la operación.</p>
+                <h5 id="progressMessage">Creando slice en OpenStack...</h5>
+                <p class="text-muted">Este proceso puede tomar varios minutos. Por favor espere.</p>
+                <div class="progress mt-3">
+                    <div class="progress-bar progress-bar-striped progress-bar-animated" 
+                         role="progressbar" style="width: 100%"></div>
+                </div>
             </div>
         </div>
     </div>
 </div>
 
+<style>
+.topology-preview {
+    font-family: monospace;
+    background: #f8f9fa;
+    padding: 15px;
+    border-radius: 8px;
+    text-align: center;
+    white-space: pre-line;
+    font-size: 14px;
+    line-height: 1.5;
+    border: 2px dashed #dee2e6;
+}
+
+.resource-summary {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    padding: 20px;
+    border-radius: 12px;
+    margin: 15px 0;
+}
+
+.resource-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 0;
+    border-bottom: 1px solid rgba(255,255,255,0.2);
+}
+
+.resource-item:last-child {
+    border-bottom: none;
+}
+
+.form-check-input:checked {
+    background-color: #0d6efd;
+    border-color: #0d6efd;
+}
+</style>
+
 {% block extra_js %}
-<script src="{{ url_for('static', filename='js/slice-create.js') }}"></script>
+<script src="{{ url_for('static', filename='js/slice-create-openstack.js') }}"></script>
 {% endblock %}
 {% endblock %}
