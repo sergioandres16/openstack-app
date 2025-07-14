@@ -254,11 +254,26 @@
     border-color: #0d6efd;
 }
 
-/* Corregir contraste de texto */
-.card-body .form-text {
+/* Corregir contraste de texto - TODOS los textos visibles */
+
+/* Texto principal en cards y formularios */
+.card-body, 
+.card-header, 
+.form-control, 
+.form-select,
+.form-label,
+.form-check-label {
+    color: #212529 !important;
+}
+
+/* Texto descriptivo y de ayuda */
+.form-text, 
+.text-muted, 
+.small {
     color: #6c757d !important;
 }
 
+/* Alertas con mejor contraste */
 .alert-info {
     color: #0c5460 !important;
     background-color: #d1ecf1 !important;
@@ -271,24 +286,55 @@
     border-color: #ffeaa7 !important;
 }
 
-/* Asegurar que el texto sea visible en fondos claros */
-.bg-light, .card-body, .list-group-item {
+/* Fondos claros con texto oscuro */
+.bg-light, 
+.card-body, 
+.list-group-item,
+.table,
+.modal-body,
+.modal-header {
     color: #212529 !important;
+    background-color: #ffffff !important;
 }
 
-.text-muted {
-    color: #6c757d !important;
-}
-
-/* Contraste para nombres de VMs y texto en vista previa */
-.list-group-item strong,
+/* Tabla y listas con contraste correcto */
 .table td,
-.table th {
+.table th,
+.list-group-item,
+.list-group-item strong,
+.dropdown-item {
     color: #212529 !important;
 }
 
-.small, .form-text {
+/* Opciones de select con fondo blanco */
+select option {
+    background-color: #ffffff !important;
+    color: #212529 !important;
+}
+
+/* Placeholders visibles */
+input::placeholder,
+textarea::placeholder,
+select::placeholder {
     color: #6c757d !important;
+    opacity: 0.8;
+}
+
+/* Asegurar que todo el texto en fondos blancos sea visible */
+.bg-white,
+.card,
+.modal-content,
+pre {
+    color: #212529 !important;
+}
+
+/* Links y botones con texto visible */
+a {
+    color: #0d6efd !important;
+}
+
+a:hover {
+    color: #0a58ca !important;
 }
 </style>
 
